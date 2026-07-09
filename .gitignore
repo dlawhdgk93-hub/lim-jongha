@@ -5,10 +5,14 @@ voice-secretary/node_modules/
 # Expo / React Native
 .expo/
 voice-secretary/.expo/
+voice-secretary/.expo-export-test/
 dist/
 web-build/
 voice-secretary/android/
 voice-secretary/ios/
+
+# APK binaries (use GitHub Actions artifacts instead)
+*.apk
 
 # Secrets
 .env
