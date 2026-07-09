@@ -1,0 +1,91 @@
+{
+  "expo": {
+    "name": "팀데이",
+    "slug": "voice-secretary",
+    "version": "1.0.15",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "teamday",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B1220"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.voicesecretary.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "음성으로 일정을 등록하기 위해 마이크 접근이 필요합니다.",
+        "NSSpeechRecognitionUsageDescription": "음성을 텍스트로 변환하기 위해 필요합니다."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B1220"
+      },
+      "package": "com.voicesecretary.app",
+      "versionCode": 16,
+      "permissions": [
+        "RECORD_AUDIO",
+        "POST_NOTIFICATIONS",
+        "VIBRATE",
+        "WAKE_LOCK",
+        "RECEIVE_BOOT_COMPLETED",
+        "SCHEDULE_EXACT_ALARM",
+        "USE_EXACT_ALARM",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.USE_EXACT_ALARM",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.WAKE_LOCK"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png",
+      "name": "팀데이",
+      "shortName": "팀데이",
+      "themeColor": "#2563EB",
+      "backgroundColor": "#0B1220"
+    },
+    "plugins": [
+      "./plugins/withRecordWidget",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "음성으로 일정을 등록하기 위해 마이크 접근이 필요합니다."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#2563EB",
+          "defaultChannel": "teamday-alarms",
+          "sounds": ["./assets/sounds/teamday_alarm.wav"],
+          "enableBackgroundRemoteNotifications": true
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "음성으로 일정을 등록하기 위해 마이크 접근이 필요합니다.",
+          "speechRecognitionPermission": "음성을 텍스트로 변환하기 위해 필요합니다.",
+          "androidSpeechServicePackages": ["com.google.android.googlequicksearchbox"]
+        }
+      ],
+      "expo-asset",
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "a46bcf17-c827-4275-a872-4be6064e22fe"
+      }
+    },
+    "owner": "dlawhdgk93"
+  }
+}

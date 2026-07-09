@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+voice-secretary/node_modules/
+
+# Expo / React Native
+.expo/
+voice-secretary/.expo/
+dist/
+web-build/
+voice-secretary/android/
+voice-secretary/ios/
+
+# Secrets
+.env
+.env.local
+.env.*
+!.env.example
+supabase/.env.secrets
+supabase/.temp/
+voice-secretary/supabase/.env.secrets
+
+# IDE / tooling
+.cursor/
+.vscode/
+*.log
+debug-*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Media / debug artifacts (local only)
+*.mp4
+*.jpg
+*.jpeg
+*.png
+!voice-secretary/assets/**
+!voice-secretary/plugins/**/android/**/*.xml
+!docs/**
+
+# Keys
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision

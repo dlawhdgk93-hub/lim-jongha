@@ -1,0 +1,70 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'voice-secretary/**'
+      - 'supabase/**'
+      - '.github/workflows/build-apk.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: voice-secretary
+
+    env:
+      EXPO_PUBLIC_SUPABASE_URL: https://ybrnljmnuahopuuyexog.supabase.co
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlicm5sam1udWFob3B1dXlleG9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4MTgyOTYsImV4cCI6MjA5ODM5NDI5Nn0.9VOJXaqNrZANHeHPp-T-7ktf16ZQzymvl9BHznG56EA
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: voice-secretary/package-lock.json
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate native Android project
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Build release APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file=$HOME/.android/debug.keystore \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=androiddebugkey \
+            -Pandroid.injected.signing.key.password=android
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teamday-apk
+          path: voice-secretary/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+      - name: Summary
+        run: |
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          ls -lh "$APK"
+          echo "APK built successfully."
