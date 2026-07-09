@@ -122,6 +122,17 @@ function stripScheduleTokens(normalized: string): string {
     .trim();
 }
 
+function hasExplicitScheduleTime(text: string): boolean {
+  const normalized = text.trim();
+  if (/(\d+|[한두세네다섯여섯일곱여덟아홉십]+)\s*분\s*(?:뒤|후|뒤에|이후)/.test(normalized)) return true;
+  if (/(\d+|[한두세네다섯여섯일곱여덟아홉십]+)\s*시간\s*(?:반)?\s*(?:뒤|후|뒤에|이후)?/.test(normalized)) return true;
+  if (/반\s*시간\s*(?:뒤|후|뒤에)/.test(normalized)) return true;
+  if (/(?:곧|잠시\s*후|조금\s*뒤|이따)/.test(normalized)) return true;
+  if (/(오전|오후)?\s*\d{1,2}\s*:\s*\d{1,2}/.test(normalized)) return true;
+  if (/(오전|오후)?\s*\d{1,2}\s*시(?:\s*\d{1,2}\s*분)?/.test(normalized)) return true;
+  return false;
+}
+
 function parseKoreanScheduleText(text: string, defaultDateKey = "", now = new Date()) {
   const normalized = text.trim();
 
@@ -191,9 +202,9 @@ function parseKoreanScheduleText(text: string, defaultDateKey = "", now = new Da
 
   const dateKey = resolveKstDateKey(now, normalized, defaultDateKey);
   const timeMatch = normalized.match(/(오전|오후)?\s*(\d{1,2})\s*시(?:\s*(\d{1,2})\s*분)?/);
-  const isAllDay =
-    /종일|하루\s*종일|종일로|당일\s*(?:만|로)?|알람\s*없/.test(normalized) &&
-    !/(오전|오후)?\s*\d{1,2}\s*시/.test(normalized);
+  const colonMatch = normalized.match(/(오전|오후)?\s*(\d{1,2})\s*:\s*(\d{1,2})/);
+  const hasExplicitTime = !!(timeMatch || colonMatch);
+  const isAllDay = !hasExplicitTime || /종일|하루\s*종일|종일로/.test(normalized);
 
   let dateStr = dateKey;
   let timeStr = "";
@@ -215,12 +226,25 @@ function parseKoreanScheduleText(text: string, defaultDateKey = "", now = new Da
       dateStr = picked.dateKey;
       timeStr = formatKstWallTime(picked.hour, picked.minute);
     }
-  } else if (isAllDay) {
-    timeStr = "";
+  } else if (colonMatch && !isAllDay) {
+    const hour12 = parseInt(colonMatch[2], 10);
+    const minute = parseInt(colonMatch[3], 10);
+    const meridiem = colonMatch[1] as "오전" | "오후" | undefined;
+    if (meridiem) {
+      const hour24 = applyMeridiem(Math.max(1, Math.min(12, hour12)), meridiem);
+      let dk = dateKey;
+      if (kstInstantMs(dk, hour24, minute) < now.getTime() - 60_000) {
+        dk = shiftKstDateKey(dk, 1);
+      }
+      dateStr = dk;
+      timeStr = formatKstWallTime(hour24, minute);
+    } else {
+      const picked = resolveAmbiguousHour(hour12, minute, dateKey, now, normalized);
+      dateStr = picked.dateKey;
+      timeStr = formatKstWallTime(picked.hour, picked.minute);
+    }
   } else {
-    const fallback = new Date(now.getTime() + 5 * 60_000);
-    dateStr = formatKstDate(fallback);
-    timeStr = formatKstTime(fallback);
+    timeStr = "";
   }
 
   let title = stripScheduleTokens(normalized);
@@ -382,14 +406,24 @@ Deno.serve(async (req: Request) => {
 
     const openaiKey = Deno.env.get("OPENAI_API_KEY");
     const hasExplicitKoreanTime = /(오전|오후)?\s*\d{1,2}\s*시/.test(text.trim());
+    const hasTime = hasExplicitScheduleTime(text.trim());
     let parsed;
     try {
-      if (hasExplicitKoreanTime) {
+      if (!hasTime || hasExplicitKoreanTime) {
         parsed = parseKoreanScheduleText(text, defaultDateKey);
       } else {
         parsed = openaiKey
           ? await parseWithGpt(openaiKey, text, defaultDateKey)
           : parseKoreanScheduleText(text, defaultDateKey);
+      }
+      if (!hasTime) {
+        parsed.parsed_content.is_all_day = true;
+        parsed.parsed_content.time = "";
+        parsed.target_timestamp = buildScheduleTimestamp(
+          parsed.parsed_content.date,
+          "",
+          true,
+        );
       }
     } catch {
       parsed = parseKoreanScheduleText(text, defaultDateKey);

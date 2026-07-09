@@ -58,7 +58,10 @@ export function OnboardingScreen({ onComplete, onRequestMic, onRequestPush }: Pr
         if (Platform.OS !== 'web') {
           try {
             const { ExpoSpeechRecognitionModule } = await import('expo-speech-recognition');
-            await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+            const speechPermission = await ExpoSpeechRecognitionModule.getPermissionsAsync();
+            if (!speechPermission.granted) {
+              await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+            }
           } catch {
             // 음성 인식 권한 실패해도 앱은 시작
           }

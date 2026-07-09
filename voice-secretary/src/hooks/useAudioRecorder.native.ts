@@ -17,10 +17,21 @@ export function useAudioRecorder() {
   }, []);
 
   const requestPermission = useCallback(async () => {
+    const existing = await Audio.getPermissionsAsync();
+    if (existing.granted) {
+      setPermissionGranted(true);
+      return true;
+    }
     const permission = await Audio.requestPermissionsAsync();
     const granted = permission.granted;
     setPermissionGranted(granted);
     return granted;
+  }, []);
+
+  useEffect(() => {
+    Audio.getPermissionsAsync()
+      .then((permission) => setPermissionGranted(permission.granted))
+      .catch(() => undefined);
   }, []);
 
   const clearTimers = () => {

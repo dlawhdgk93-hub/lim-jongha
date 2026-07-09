@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import { SUPABASE_ANON_KEY, VOICE_PARSE_URL } from '../constants/config';
 import type { ParseScheduleOptions } from '../utils/nlpParser';
 import { parseKoreanScheduleText } from '../utils/nlpParser';
-import { normalizeKoreanSpeechText } from '../utils/koreanSpeechNormalize';
+import { normalizeKoreanSpeechText, hasExplicitScheduleTime } from '../utils/koreanSpeechNormalize';
 import { getNativeAudioUploadMeta } from '../utils/audioUpload';
 import { supabase } from './supabase';
 import type { VoiceParseResult } from '../types/schedule';
@@ -42,6 +42,11 @@ export async function parseVoiceInput(options: {
   if (options.text?.trim()) {
     const cleaned = normalizeKoreanSpeechText(options.text.trim());
     const storedRaw = options.rawText?.trim() || options.text.trim();
+
+    if (!hasExplicitScheduleTime(cleaned)) {
+      return parseLocally(cleaned, options.parseOptions, storedRaw);
+    }
+
     const hasExplicitKoreanTime = /(오전|오후)?\s*\d{1,2}\s*시/.test(cleaned);
 
     if (hasExplicitKoreanTime) {

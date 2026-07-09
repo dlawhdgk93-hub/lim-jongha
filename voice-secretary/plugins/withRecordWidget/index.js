@@ -1,6 +1,7 @@
 const {
   withAndroidManifest,
   withDangerousMod,
+  withMainApplication,
   AndroidConfig,
 } = require('@expo/config-plugins');
 const fs = require('fs');
@@ -8,46 +9,137 @@ const path = require('path');
 
 const PLUGIN_ANDROID = path.join(__dirname, 'android');
 
+const WIDGET_RECEIVERS = [
+  {
+    name: '.RecordWidgetProvider',
+    label: '팀데이 녹음',
+    infoXml: '@xml/record_widget_info',
+  },
+  {
+    name: '.TodayScheduleWidgetProvider',
+    label: '팀데이 오늘 일정',
+    infoXml: '@xml/today_widget_info',
+  },
+  {
+    name: '.CalendarWidgetProvider',
+    label: '팀데이 달력',
+    infoXml: '@xml/calendar_widget_info',
+  },
+];
+
+const KOTLIN_FILES = [
+  'RecordWidgetProvider.kt',
+  'TodayScheduleWidgetProvider.kt',
+  'CalendarWidgetProvider.kt',
+  'WidgetDataStore.kt',
+  'WidgetRefreshHelper.kt',
+  'WidgetSyncModule.kt',
+  'WidgetSyncPackage.kt',
+];
+
+const LAYOUT_FILES = {
+  'widget_record.xml': 'res/layout/widget_record.xml',
+  'widget_today_schedule.xml': 'res/layout/widget_today_schedule.xml',
+  'widget_calendar.xml': 'res/layout/widget_calendar.xml',
+};
+
+const XML_FILES = {
+  'record_widget_info.xml': 'res/xml/record_widget_info.xml',
+  'today_widget_info.xml': 'res/xml/today_widget_info.xml',
+  'calendar_widget_info.xml': 'res/xml/calendar_widget_info.xml',
+};
+
+const DRAWABLE_FILES = {
+  'widget_record_bg.xml': 'res/drawable/widget_record_bg.xml',
+  'widget_panel_bg.xml': 'res/drawable/widget_panel_bg.xml',
+  'widget_day_cell_empty.xml': 'res/drawable/widget_day_cell_empty.xml',
+  'widget_day_cell_today.xml': 'res/drawable/widget_day_cell_today.xml',
+  'widget_day_cell_event.xml': 'res/drawable/widget_day_cell_event.xml',
+};
+
+const WIDGET_STRINGS = [
+  ['widget_record_desc', '바로 음성 기록'],
+  ['widget_today_desc', '오늘 일정 보기'],
+  ['widget_calendar_desc', '월간 달력'],
+];
+
 function copyIfExists(src, dest) {
   if (!fs.existsSync(src)) return;
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(src, dest);
 }
 
+function ensureWidgetReceiver(app, receiverName, label, infoXml) {
+  if (!Array.isArray(app.receiver)) {
+    app.receiver = [];
+  }
+
+  const alreadyAdded = app.receiver.some((item) => item?.$?.['android:name'] === receiverName);
+  if (alreadyAdded) return;
+
+  app.receiver.push({
+    $: {
+      'android:name': receiverName,
+      'android:exported': 'true',
+      'android:label': label,
+    },
+    'intent-filter': [
+      {
+        action: [{ $: { 'android:name': 'android.appwidget.action.APPWIDGET_UPDATE' } }],
+      },
+    ],
+    'meta-data': [
+      {
+        $: {
+          'android:name': 'android.appwidget.provider',
+          'android:resource': infoXml,
+        },
+      },
+    ],
+  });
+}
+
+function appendStrings(stringsPath, entries) {
+  const lines = entries.map(([name, value]) => `    <string name="${name}" translatable="false">${value}</string>`);
+
+  if (fs.existsSync(stringsPath)) {
+    let strings = fs.readFileSync(stringsPath, 'utf8');
+    for (const line of lines) {
+      const name = line.match(/name="([^"]+)"/)?.[1];
+      if (name && !strings.includes(`name="${name}"`)) {
+        strings = strings.replace('</resources>', `${line}\n</resources>`);
+      }
+    }
+    fs.writeFileSync(stringsPath, strings);
+    return;
+  }
+
+  fs.mkdirSync(path.dirname(stringsPath), { recursive: true });
+  fs.writeFileSync(
+    stringsPath,
+    `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n${lines.join('\n')}\n</resources>\n`,
+  );
+}
+
 function withRecordWidget(config) {
   config = withAndroidManifest(config, (manifestConfig) => {
     const app = AndroidConfig.Manifest.getMainApplicationOrThrow(manifestConfig.modResults);
-    if (!Array.isArray(app.receiver)) {
-      app.receiver = [];
+    for (const receiver of WIDGET_RECEIVERS) {
+      ensureWidgetReceiver(app, receiver.name, receiver.label, receiver.infoXml);
     }
-
-    const alreadyAdded = app.receiver.some(
-      (item) => item?.$?.['android:name'] === '.RecordWidgetProvider',
-    );
-    if (!alreadyAdded) {
-      app.receiver.push({
-        $: {
-          'android:name': '.RecordWidgetProvider',
-          'android:exported': 'true',
-          'android:label': '팀데이 녹음',
-        },
-        'intent-filter': [
-          {
-            action: [{ $: { 'android:name': 'android.appwidget.action.APPWIDGET_UPDATE' } }],
-          },
-        ],
-        'meta-data': [
-          {
-            $: {
-              'android:name': 'android.appwidget.provider',
-              'android:resource': '@xml/record_widget_info',
-            },
-          },
-        ],
-      });
-    }
-
     return manifestConfig;
+  });
+
+  config = withMainApplication(config, (mainAppConfig) => {
+    let contents = mainAppConfig.modResults.contents;
+    if (!contents.includes('WidgetSyncPackage')) {
+      contents = contents.replace(
+        'val packages = PackageList(this).packages',
+        'val packages = PackageList(this).packages.apply { add(WidgetSyncPackage()) }',
+      );
+    }
+    mainAppConfig.modResults.contents = contents;
+    return mainAppConfig;
   });
 
   config = withDangerousMod(config, [
@@ -58,38 +150,28 @@ function withRecordWidget(config) {
       const androidRoot = path.join(modConfig.modRequest.platformProjectRoot, 'app/src/main');
       const javaDir = path.join(androidRoot, 'java', packagePath);
 
+      for (const fileName of KOTLIN_FILES) {
+        copyIfExists(path.join(PLUGIN_ANDROID, fileName), path.join(javaDir, fileName));
+      }
+
+      for (const [fileName, destRel] of Object.entries(LAYOUT_FILES)) {
+        copyIfExists(path.join(PLUGIN_ANDROID, fileName), path.join(androidRoot, destRel));
+      }
+
+      for (const [fileName, destRel] of Object.entries(XML_FILES)) {
+        copyIfExists(path.join(PLUGIN_ANDROID, fileName), path.join(androidRoot, destRel));
+      }
+
+      for (const [fileName, destRel] of Object.entries(DRAWABLE_FILES)) {
+        copyIfExists(path.join(PLUGIN_ANDROID, fileName), path.join(androidRoot, destRel));
+      }
+
       copyIfExists(
-        path.join(PLUGIN_ANDROID, 'RecordWidgetProvider.kt'),
-        path.join(javaDir, 'RecordWidgetProvider.kt'),
-      );
-      copyIfExists(
-        path.join(PLUGIN_ANDROID, 'widget_record.xml'),
-        path.join(androidRoot, 'res/layout/widget_record.xml'),
-      );
-      copyIfExists(
-        path.join(PLUGIN_ANDROID, 'record_widget_info.xml'),
-        path.join(androidRoot, 'res/xml/record_widget_info.xml'),
-      );
-      copyIfExists(
-        path.join(PLUGIN_ANDROID, 'widget_record_bg.xml'),
-        path.join(androidRoot, 'res/drawable/widget_record_bg.xml'),
+        path.join(PLUGIN_ANDROID, 'widget_styles.xml'),
+        path.join(androidRoot, 'res/values/widget_styles.xml'),
       );
 
-      const stringsPath = path.join(androidRoot, 'res/values/strings.xml');
-      const widgetString = '    <string name="widget_record_desc" translatable="false">바로 음성 기록</string>';
-      if (fs.existsSync(stringsPath)) {
-        let strings = fs.readFileSync(stringsPath, 'utf8');
-        if (!strings.includes('widget_record_desc')) {
-          strings = strings.replace('</resources>', `${widgetString}\n</resources>`);
-          fs.writeFileSync(stringsPath, strings);
-        }
-      } else {
-        fs.mkdirSync(path.dirname(stringsPath), { recursive: true });
-        fs.writeFileSync(
-          stringsPath,
-          `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n${widgetString}\n</resources>\n`,
-        );
-      }
+      appendStrings(path.join(androidRoot, 'res/values/strings.xml'), WIDGET_STRINGS);
 
       return modConfig;
     },

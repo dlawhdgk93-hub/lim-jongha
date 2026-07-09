@@ -368,6 +368,10 @@ export function useDeviceSpeechRecognitionImpl(): DeviceSpeechApi {
 
   const requestPermission = useCallback(async () => {
 
+    const existing = await ExpoSpeechRecognitionModule.getPermissionsAsync();
+
+    if (existing.granted) return true;
+
     const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
 
     // #region agent log

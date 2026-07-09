@@ -38,10 +38,7 @@ export type ParseScheduleOptions = {
 function detectAllDay(normalized: string, hasExplicitTime: boolean): boolean {
   if (/종일|하루\s*종일|종일로/.test(normalized)) return true;
   if (hasExplicitTime) return false;
-  if (/알람\s*없|시간\s*(?:까지\s*)?(?:는\s*)?(?:필요\s*)?(?:없|안)|당일\s*(?:만|로)?/.test(normalized)) {
-    return true;
-  }
-  return false;
+  return true;
 }
 
 function stripScheduleTokens(normalized: string): string {
@@ -133,12 +130,6 @@ export function parseKoreanScheduleText(
   if (timeResult && !isAllDay) {
     localDate = timeResult.dateKey ?? dateKey;
     localTime = formatKstWallTime(timeResult.hour, timeResult.minute);
-  } else if (isAllDay) {
-    localTime = '';
-  } else {
-    const fallback = new Date(now.getTime() + 5 * 60_000);
-    localDate = formatKstDate(fallback);
-    localTime = formatKstTime(fallback);
   }
 
   let title = stripScheduleTokens(normalized);

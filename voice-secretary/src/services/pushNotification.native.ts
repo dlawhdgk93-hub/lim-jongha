@@ -1,6 +1,7 @@
 import * as Device from 'expo-device';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Notifications from 'expo-notifications';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { getAlarmModeFromSchedule } from '../constants/alarmModes';
@@ -15,6 +16,7 @@ import { shouldScheduleAlarm } from '../utils/scheduleHelpers';
 const PUSH_TOKEN_TIMEOUT_MS = 8000;
 export const ALARM_CHANNEL_ID = 'teamday-alarms';
 const SHARE_CHANNEL_ID = 'schedule-shares';
+const EXACT_ALARM_PROMPTED_KEY = 'voice_secretary_exact_alarm_prompted';
 /** Android res/raw — must match app.json expo-notifications sounds */
 const ANDROID_ALARM_SOUND = 'teamday_alarm';
 
@@ -42,6 +44,9 @@ function getAndroidPackage(): string {
 export async function ensureExactAlarmPermission(): Promise<void> {
   if (Platform.OS !== 'android' || Platform.Version < 31) return;
 
+  const alreadyPrompted = await AsyncStorage.getItem(EXACT_ALARM_PROMPTED_KEY);
+  if (alreadyPrompted === 'true') return;
+
   try {
     await IntentLauncher.startActivityAsync('android.settings.REQUEST_SCHEDULE_EXACT_ALARM', {
       data: `package:${getAndroidPackage()}`,
@@ -54,6 +59,8 @@ export async function ensureExactAlarmPermission(): Promise<void> {
     } catch {
       // ignore
     }
+  } finally {
+    await AsyncStorage.setItem(EXACT_ALARM_PROMPTED_KEY, 'true');
   }
 }
 
@@ -76,6 +83,22 @@ async function ensureAlarmChannel() {
   });
 }
 
+async function setupNotificationInfrastructure() {
+  await ensureAlarmChannel();
+
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync(SHARE_CHANNEL_ID, {
+      name: '일정 공유',
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: 'default',
+      enableVibrate: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    });
+  }
+
+  await registerBackgroundAlarmTask();
+}
+
 export async function requestNotificationPermission(): Promise<boolean> {
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
   let finalStatus = existingStatus;
@@ -91,20 +114,8 @@ export async function requestNotificationPermission(): Promise<boolean> {
     finalStatus = status;
   }
 
-  await ensureAlarmChannel();
-
-  if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync(SHARE_CHANNEL_ID, {
-      name: '일정 공유',
-      importance: Notifications.AndroidImportance.HIGH,
-      sound: 'default',
-      enableVibrate: true,
-      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-    });
-  }
-
   if (finalStatus === 'granted') {
-    await registerBackgroundAlarmTask();
+    await setupNotificationInfrastructure();
     await ensureExactAlarmPermission();
   }
 
@@ -132,8 +143,10 @@ async function fetchExpoPushToken(): Promise<string | null> {
 }
 
 export async function registerForPushNotifications(userId: string) {
-  const granted = await requestNotificationPermission();
-  if (!granted) return null;
+  const { status } = await Notifications.getPermissionsAsync();
+  if (status !== 'granted') return null;
+
+  await setupNotificationInfrastructure();
   if (!Device.isDevice) return null;
 
   const token = await fetchExpoPushToken();

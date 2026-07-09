@@ -363,4 +363,12 @@ export function parseRelativeTimeOffset(
   return null;
 }
 
+/** 시각·상대시간(몇 분 뒤, N시 등)이 문장에 있는지 */
+export function hasExplicitScheduleTime(text: string): boolean {
+  const normalized = normalizeKoreanSpeechText(text);
+  if (parseRelativeTimeOffset(normalized)) return true;
+  if (parseKoreanTimeExpression(normalized, {})) return true;
+  return false;
+}
+
 export { KOREAN_TIME_REGEX };

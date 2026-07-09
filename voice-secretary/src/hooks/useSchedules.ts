@@ -4,6 +4,7 @@ import { notifyScheduleShareReceived } from '../services/pushNotification';
 import { fetchSharesForUser, linkScheduleSharesForCurrentUser } from '../services/scheduleShare';
 import { supabase } from '../services/supabase';
 import { parseScheduleRow, type Schedule, type ScheduleShareInfo } from '../types/schedule';
+import { syncSchedulesToWidget } from '../services/widgetSync';
 
 function enrichSchedules(
   rows: Schedule[],
@@ -40,6 +41,7 @@ export function useSchedules(userId: string | undefined, userEmail: string | und
   const fetchSchedules = useCallback(async () => {
     if (!userId) {
       setSchedules([]);
+      void syncSchedulesToWidget([]);
       setLoading(false);
       return;
     }
@@ -79,10 +81,14 @@ export function useSchedules(userId: string | undefined, userEmail: string | und
         }
       }
 
-      setSchedules(enrichSchedules(parsed, userId, ownedShares, ownerEmails));
+      const nextSchedules = enrichSchedules(parsed, userId, ownedShares, ownerEmails);
+      setSchedules(nextSchedules);
+      void syncSchedulesToWidget(nextSchedules);
     } catch (err) {
       setError((err as Error).message);
-      setSchedules((data ?? []).map(parseScheduleRow));
+      const fallback = (data ?? []).map(parseScheduleRow);
+      setSchedules(fallback);
+      void syncSchedulesToWidget(fallback);
     }
 
     setLoading(false);
