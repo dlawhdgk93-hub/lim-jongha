@@ -8,13 +8,14 @@ import { DateTabBar } from '../components/DateTabBar';
 import { ScheduleCalendar } from '../components/ScheduleCalendar';
 import { ScheduleCard } from '../components/ScheduleCard';
 import { ScheduleDetailModal } from '../components/ScheduleDetailModal';
+import { ScheduleSearchModal } from '../components/ScheduleSearchModal';
 import { SharePickerModal } from '../components/SharePickerModal';
 import { VoiceChatPanel } from '../components/VoiceChatPanel';
 import { NativeSpeechBoundary } from '../components/NativeSpeechBoundary';
 import type { ThemeColors } from '../constants/themes';
 import { useThemeColors, useThemedStyles } from '../hooks/useThemedStyles';
 import { useScheduleAlarms } from '../hooks/useScheduleAlarms';
-import { useSchedules } from '../hooks/useSchedules';
+import { useSchedules, fetchScheduleById } from '../hooks/useSchedules';
 import { useVoiceParser } from '../hooks/useVoiceParser';
 import {
   registerForPushNotifications,
@@ -167,12 +168,30 @@ export function HomeScreen({ navigation }: Props) {
   const [deleting, setDeleting] = useState(false);
   const [sharePickerVisible, setSharePickerVisible] = useState(false);
   const [widgetAutoRecord, setWidgetAutoRecord] = useState(false);
+  const [searchVisible, setSearchVisible] = useState(false);
   const [speechHostFailed, setSpeechHostFailed] = useState(false);
   const selectedIdsRef = useRef(selectedIds);
   selectedIdsRef.current = selectedIds;
   const viewMode = useScheduleViewStore((s) => s.viewMode);
   const setViewMode = useScheduleViewStore((s) => s.setViewMode);
   const loadViewMode = useScheduleViewStore((s) => s.loadViewMode);
+
+  const handleWidgetToggle = useCallback(
+    async (scheduleId: string) => {
+      let schedule = schedules.find((item) => item.id === scheduleId);
+      if (!schedule) {
+        schedule = (await fetchScheduleById(scheduleId)) ?? undefined;
+      }
+      if (!schedule || (schedule.shareInfo?.isSharedWithMe ?? schedule.user_id !== userId)) return;
+      const nextStatus = schedule.status === 'completed' ? 'pending' : 'completed';
+      try {
+        await updateSchedule(scheduleId, { status: nextStatus });
+      } catch (err) {
+        showAppAlert('위젯 완료 처리 실패', (err as Error).message);
+      }
+    },
+    [schedules, updateSchedule, userId],
+  );
 
   useEffect(() => {
     void loadViewMode();
@@ -181,20 +200,26 @@ export function HomeScreen({ navigation }: Props) {
   useEffect(() => {
     if (Platform.OS === 'web') return undefined;
 
-    const handleRecordUrl = (url: string | null) => {
+    const handleWidgetUrl = (url: string | null) => {
       if (!url) return;
       if (url.includes('record') || url.includes('action=record')) {
         setWidgetAutoRecord(true);
+        return;
+      }
+
+      const toggleMatch = url.match(/toggle\?id=([^&]+)/) ?? url.match(/toggle\/([^/?]+)/);
+      if (toggleMatch?.[1]) {
+        void handleWidgetToggle(decodeURIComponent(toggleMatch[1]));
       }
     };
 
     Linking.getInitialURL()
-      .then(handleRecordUrl)
+      .then(handleWidgetUrl)
       .catch(() => undefined);
 
-    const subscription = Linking.addEventListener('url', ({ url }) => handleRecordUrl(url));
+    const subscription = Linking.addEventListener('url', ({ url }) => handleWidgetUrl(url));
     return () => subscription.remove();
-  }, []);
+  }, [handleWidgetToggle]);
 
   const canDeleteSchedule = useCallback(
     (schedule: Schedule) => schedule.user_id === userId,
@@ -523,6 +548,13 @@ export function HomeScreen({ navigation }: Props) {
         <Text style={styles.headerTitle}>팀데이</Text>
         <View style={styles.headerActions}>
           <Pressable
+            onPress={() => setSearchVisible(true)}
+            style={styles.headerIconBtn}
+            accessibilityLabel="일정 검색"
+          >
+            <Text style={styles.headerIcon}>🔍</Text>
+          </Pressable>
+          <Pressable
             onPress={() => navigation.navigate('Share')}
             style={styles.headerIconBtn}
             accessibilityLabel="일정 공유"
@@ -769,6 +801,20 @@ export function HomeScreen({ navigation }: Props) {
           }}
         />
       ) : null}
+
+      <ScheduleSearchModal
+        visible={searchVisible}
+        schedules={schedules}
+        onClose={() => setSearchVisible(false)}
+        onSelectSchedule={(scheduleId) => {
+          const schedule = schedules.find((item) => item.id === scheduleId);
+          if (schedule?.target_timestamp) {
+            setSelectedMonthKey(getMonthKey(new Date(schedule.target_timestamp)));
+            setSelectedDateKey(getScheduleDateKey(schedule.target_timestamp));
+          }
+          setDetailScheduleId(scheduleId);
+        }}
+      />
     </View>
   );
 }

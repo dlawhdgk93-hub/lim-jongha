@@ -6,6 +6,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Paint
 import android.net.Uri
 import android.view.View
 import android.widget.RemoteViews
@@ -18,62 +19,78 @@ class TodayScheduleWidgetProvider : AppWidgetProvider() {
     appWidgetManager: AppWidgetManager,
     appWidgetIds: IntArray,
   ) {
-    val todayKey = todayDateKey()
-    val todayLabel = todayLabelText()
-    val todaySchedules = WidgetDataStore.schedulesByDate(context)[todayKey].orEmpty()
+    val schedulesByDate = WidgetDataStore.schedulesByDate(context)
+    val incompletePast = WidgetDataStore.incompletePastSchedules(context)
+    val dayBuckets = buildDayBuckets(schedulesByDate)
+    val displayRows = buildDisplayRows(incompletePast, dayBuckets, maxRows = MAX_ROWS)
+    val totalCount = incompletePast.size + dayBuckets.sumOf { it.schedules.size }
+    val hiddenCount = totalCount - displayRows.size
 
     for (appWidgetId in appWidgetIds) {
       val views = RemoteViews(context.packageName, R.layout.widget_today_schedule)
 
-      views.setTextViewText(R.id.widget_today_title, "오늘 · $todayLabel")
-      views.setTextViewText(R.id.widget_today_count, "${todaySchedules.size}건")
+      views.setTextViewText(R.id.widget_today_title, "미완료·3일 일정")
+      views.setTextViewText(R.id.widget_today_count, "${totalCount}건")
 
-      val slotTimes = intArrayOf(
-        R.id.widget_schedule_1_time,
-        R.id.widget_schedule_2_time,
-        R.id.widget_schedule_3_time,
-        R.id.widget_schedule_4_time,
-      )
-      val slotTitles = intArrayOf(
-        R.id.widget_schedule_1_title,
-        R.id.widget_schedule_2_title,
-        R.id.widget_schedule_3_title,
-        R.id.widget_schedule_4_title,
-      )
-      val slotRows = intArrayOf(
-        R.id.widget_schedule_row_1,
-        R.id.widget_schedule_row_2,
-        R.id.widget_schedule_row_3,
-        R.id.widget_schedule_row_4,
-      )
-
-      for (index in slotRows.indices) {
-        val schedule = todaySchedules.getOrNull(index)
-        if (schedule == null) {
-          views.setViewVisibility(slotRows[index], View.GONE)
+      for (index in ROW_IDS.indices) {
+        val row = displayRows.getOrNull(index)
+        if (row == null) {
+          views.setViewVisibility(ROW_IDS[index], View.GONE)
           continue
         }
 
-        views.setViewVisibility(slotRows[index], View.VISIBLE)
-        views.setTextViewText(slotTimes[index], schedule.time.ifBlank { "종일" })
-        views.setTextViewText(slotTitles[index], schedule.title)
-        if (schedule.status == "completed") {
-          views.setTextColor(slotTitles[index], Color.parseColor("#94A3B8"))
+        val completed = row.schedule.status == "completed"
+        val incompletePastDue = row.isIncompletePast
+        views.setViewVisibility(ROW_IDS[index], View.VISIBLE)
+        views.setTextViewText(DAY_IDS[index], row.dayLabel)
+        views.setTextViewText(TIME_IDS[index], row.schedule.time.ifBlank { "종일" })
+        views.setTextViewText(TITLE_IDS[index], row.schedule.title)
+
+        views.setImageViewResource(
+          CHECK_IDS[index],
+          if (completed) R.drawable.widget_checkbox_checked else R.drawable.widget_checkbox_unchecked,
+        )
+
+        if (completed) {
+          views.setInt(TITLE_IDS[index], "setPaintFlags", Paint.STRIKE_THRU_TEXT_FLAG or Paint.ANTI_ALIAS_FLAG)
+          views.setTextColor(TITLE_IDS[index], Color.parseColor("#64748B"))
+          views.setTextColor(TIME_IDS[index], Color.parseColor("#64748B"))
+          views.setTextColor(DAY_IDS[index], Color.parseColor("#64748B"))
         } else {
-          views.setTextColor(slotTitles[index], Color.parseColor("#F8FAFC"))
+          views.setInt(TITLE_IDS[index], "setPaintFlags", Paint.ANTI_ALIAS_FLAG)
+          views.setTextColor(TITLE_IDS[index], Color.parseColor("#F8FAFC"))
+          views.setTextColor(TIME_IDS[index], Color.parseColor("#93C5FD"))
+          views.setTextColor(
+            DAY_IDS[index],
+            if (incompletePastDue) Color.parseColor("#FCA5A5") else Color.parseColor("#64748B"),
+          )
         }
+
+        val toggleIntent = Intent(context, WidgetScheduleToggleReceiver::class.java).apply {
+          action = WidgetScheduleToggleReceiver.ACTION_TOGGLE
+          putExtra(WidgetScheduleToggleReceiver.EXTRA_SCHEDULE_ID, row.schedule.id)
+        }
+        val requestCode = row.schedule.id.hashCode()
+        val togglePending = PendingIntent.getBroadcast(
+          context,
+          requestCode,
+          toggleIntent,
+          PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        views.setOnClickPendingIntent(CHECK_IDS[index], togglePending)
+        views.setOnClickPendingIntent(ROW_IDS[index], togglePending)
       }
 
-      val extraCount = todaySchedules.size - slotRows.size
-      if (extraCount > 0) {
+      if (hiddenCount > 0) {
         views.setViewVisibility(R.id.widget_schedule_more, View.VISIBLE)
-        views.setTextViewText(R.id.widget_schedule_more, "외 ${extraCount}건 더 있음")
+        views.setTextViewText(R.id.widget_schedule_more, "외 ${hiddenCount}건 더 있음 · 앱에서 보기")
       } else {
         views.setViewVisibility(R.id.widget_schedule_more, View.GONE)
       }
 
-      if (todaySchedules.isEmpty()) {
+      if (totalCount == 0) {
         views.setViewVisibility(R.id.widget_today_empty, View.VISIBLE)
+        views.setTextViewText(R.id.widget_today_empty, "미완료·3일간 일정이 없습니다")
       } else {
         views.setViewVisibility(R.id.widget_today_empty, View.GONE)
       }
@@ -88,30 +105,150 @@ class TodayScheduleWidgetProvider : AppWidgetProvider() {
         openIntent,
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
       )
-      views.setOnClickPendingIntent(R.id.widget_today_root, pending)
+      views.setOnClickPendingIntent(R.id.widget_today_title, pending)
+      views.setOnClickPendingIntent(R.id.widget_today_count, pending)
 
       appWidgetManager.updateAppWidget(appWidgetId, views)
     }
   }
 
-  companion object {
-    private fun todayDateKey(): String {
-      val calendar = Calendar.getInstance()
-      return String.format(
-        Locale.US,
-        "%04d-%02d-%02d",
-        calendar.get(Calendar.YEAR),
-        calendar.get(Calendar.MONTH) + 1,
-        calendar.get(Calendar.DAY_OF_MONTH),
+  private data class DayBucket(
+    val label: String,
+    val dateKey: String,
+    val schedules: List<WidgetScheduleItem>,
+  )
+
+  private data class DisplayRow(
+    val dayLabel: String,
+    val schedule: WidgetScheduleItem,
+    val isIncompletePast: Boolean = false,
+  )
+
+  private fun buildDayBuckets(schedulesByDate: Map<String, List<WidgetScheduleItem>>): List<DayBucket> {
+    val calendar = Calendar.getInstance()
+    val labels = arrayOf("오늘", "내일", "글피")
+    val buckets = mutableListOf<DayBucket>()
+
+    for (offset in 0..2) {
+      val key = dateKeyForOffset(calendar, offset)
+      buckets.add(
+        DayBucket(
+          label = labels[offset],
+          dateKey = key,
+          schedules = schedulesByDate[key].orEmpty(),
+        ),
       )
     }
 
-    private fun todayLabelText(): String {
-      val calendar = Calendar.getInstance()
-      val month = calendar.get(Calendar.MONTH) + 1
-      val day = calendar.get(Calendar.DAY_OF_MONTH)
-      val weekday = arrayOf("일", "월", "화", "수", "목", "금", "토")[calendar.get(Calendar.DAY_OF_WEEK) - 1]
-      return "${month}월 ${day}일 ($weekday)"
+    return buckets
+  }
+
+  private fun buildDisplayRows(
+    incompletePast: List<WidgetScheduleItem>,
+    buckets: List<DayBucket>,
+    maxRows: Int,
+  ): List<DisplayRow> {
+    val rows = mutableListOf<DisplayRow>()
+
+    incompletePast.forEachIndexed { index, schedule ->
+      if (rows.size >= maxRows) return rows
+      rows.add(
+        DisplayRow(
+          dayLabel = if (index == 0) "미완료" else formatShortDate(schedule.dateKey),
+          schedule = schedule,
+          isIncompletePast = true,
+        ),
+      )
     }
+
+    for (bucket in buckets) {
+      bucket.schedules.forEachIndexed { index, schedule ->
+        if (rows.size >= maxRows) return rows
+        rows.add(
+          DisplayRow(
+            dayLabel = if (index == 0) bucket.label else "",
+            schedule = schedule,
+            isIncompletePast = false,
+          ),
+        )
+      }
+    }
+
+    return rows
+  }
+
+  private fun formatShortDate(dateKey: String): String {
+    val parts = dateKey.split("-")
+    if (parts.size != 3) return dateKey
+    val month = parts[1].toIntOrNull() ?: return dateKey
+    val day = parts[2].toIntOrNull() ?: return dateKey
+    return "${month}/${day}"
+  }
+
+  private fun dateKeyForOffset(base: Calendar, dayOffset: Int): String {
+    val calendar = base.clone() as Calendar
+    calendar.add(Calendar.DAY_OF_MONTH, dayOffset)
+    return String.format(
+      Locale.US,
+      "%04d-%02d-%02d",
+      calendar.get(Calendar.YEAR),
+      calendar.get(Calendar.MONTH) + 1,
+      calendar.get(Calendar.DAY_OF_MONTH),
+    )
+  }
+
+  companion object {
+    private const val MAX_ROWS = 8
+
+    private val ROW_IDS = intArrayOf(
+      R.id.widget_schedule_row_1,
+      R.id.widget_schedule_row_2,
+      R.id.widget_schedule_row_3,
+      R.id.widget_schedule_row_4,
+      R.id.widget_schedule_row_5,
+      R.id.widget_schedule_row_6,
+      R.id.widget_schedule_row_7,
+      R.id.widget_schedule_row_8,
+    )
+    private val CHECK_IDS = intArrayOf(
+      R.id.widget_schedule_1_check,
+      R.id.widget_schedule_2_check,
+      R.id.widget_schedule_3_check,
+      R.id.widget_schedule_4_check,
+      R.id.widget_schedule_5_check,
+      R.id.widget_schedule_6_check,
+      R.id.widget_schedule_7_check,
+      R.id.widget_schedule_8_check,
+    )
+    private val DAY_IDS = intArrayOf(
+      R.id.widget_schedule_1_day,
+      R.id.widget_schedule_2_day,
+      R.id.widget_schedule_3_day,
+      R.id.widget_schedule_4_day,
+      R.id.widget_schedule_5_day,
+      R.id.widget_schedule_6_day,
+      R.id.widget_schedule_7_day,
+      R.id.widget_schedule_8_day,
+    )
+    private val TIME_IDS = intArrayOf(
+      R.id.widget_schedule_1_time,
+      R.id.widget_schedule_2_time,
+      R.id.widget_schedule_3_time,
+      R.id.widget_schedule_4_time,
+      R.id.widget_schedule_5_time,
+      R.id.widget_schedule_6_time,
+      R.id.widget_schedule_7_time,
+      R.id.widget_schedule_8_time,
+    )
+    private val TITLE_IDS = intArrayOf(
+      R.id.widget_schedule_1_title,
+      R.id.widget_schedule_2_title,
+      R.id.widget_schedule_3_title,
+      R.id.widget_schedule_4_title,
+      R.id.widget_schedule_5_title,
+      R.id.widget_schedule_6_title,
+      R.id.widget_schedule_7_title,
+      R.id.widget_schedule_8_title,
+    )
   }
 }

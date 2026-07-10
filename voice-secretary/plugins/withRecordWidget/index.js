@@ -17,7 +17,7 @@ const WIDGET_RECEIVERS = [
   },
   {
     name: '.TodayScheduleWidgetProvider',
-    label: '팀데이 오늘 일정',
+    label: '팀데이 미완료·3일',
     infoXml: '@xml/today_widget_info',
   },
   {
@@ -35,6 +35,7 @@ const KOTLIN_FILES = [
   'WidgetRefreshHelper.kt',
   'WidgetSyncModule.kt',
   'WidgetSyncPackage.kt',
+  'WidgetScheduleToggleReceiver.kt',
 ];
 
 const LAYOUT_FILES = {
@@ -55,11 +56,18 @@ const DRAWABLE_FILES = {
   'widget_day_cell_empty.xml': 'res/drawable/widget_day_cell_empty.xml',
   'widget_day_cell_today.xml': 'res/drawable/widget_day_cell_today.xml',
   'widget_day_cell_event.xml': 'res/drawable/widget_day_cell_event.xml',
+  'widget_checkbox_checked.xml': 'res/drawable/widget_checkbox_checked.xml',
+  'widget_checkbox_unchecked.xml': 'res/drawable/widget_checkbox_unchecked.xml',
+};
+
+const TOGGLE_RECEIVER = {
+  name: '.WidgetScheduleToggleReceiver',
+  action: 'com.voicesecretary.app.WIDGET_TOGGLE_SCHEDULE',
 };
 
 const WIDGET_STRINGS = [
   ['widget_record_desc', '바로 음성 기록'],
-  ['widget_today_desc', '오늘 일정 보기'],
+  ['widget_today_desc', '미완료·오늘·내일·글피 일정'],
   ['widget_calendar_desc', '월간 달력'],
 ];
 
@@ -67,6 +75,27 @@ function copyIfExists(src, dest) {
   if (!fs.existsSync(src)) return;
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(src, dest);
+}
+
+function ensureToggleReceiver(app, receiverName, action) {
+  if (!Array.isArray(app.receiver)) {
+    app.receiver = [];
+  }
+
+  const alreadyAdded = app.receiver.some((item) => item?.$?.['android:name'] === receiverName);
+  if (alreadyAdded) return;
+
+  app.receiver.push({
+    $: {
+      'android:name': receiverName,
+      'android:exported': 'false',
+    },
+    'intent-filter': [
+      {
+        action: [{ $: { 'android:name': action } }],
+      },
+    ],
+  });
 }
 
 function ensureWidgetReceiver(app, receiverName, label, infoXml) {
@@ -127,6 +156,7 @@ function withRecordWidget(config) {
     for (const receiver of WIDGET_RECEIVERS) {
       ensureWidgetReceiver(app, receiver.name, receiver.label, receiver.infoXml);
     }
+    ensureToggleReceiver(app, TOGGLE_RECEIVER.name, TOGGLE_RECEIVER.action);
     return manifestConfig;
   });
 

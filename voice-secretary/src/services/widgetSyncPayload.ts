@@ -3,6 +3,7 @@ import { getScheduleDateKey } from '../utils/scheduleDates';
 
 export type WidgetSchedulePayload = {
   schedules: Array<{
+    id: string;
     dateKey: string;
     time: string;
     title: string;
@@ -15,6 +16,7 @@ export function buildWidgetSchedulePayload(schedules: Schedule[]): WidgetSchedul
     schedules: schedules
       .filter((schedule) => schedule.status !== 'cancelled')
       .map((schedule) => ({
+        id: schedule.id,
         dateKey: getScheduleDateKey(schedule.target_timestamp),
         time: schedule.parsed_content.is_all_day
           ? '종일'
