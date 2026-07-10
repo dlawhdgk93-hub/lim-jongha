@@ -5,6 +5,7 @@ import {
   parseKoreanTimeExpression,
   parseRelativeTimeOffset,
 } from './koreanSpeechNormalize';
+import { stripCalendarDateTokens, parseKoreanCalendarDate } from './koreanDateParse';
 import { dateKeyToDate } from './scheduleDates';
 import {
   buildScheduleTimestamp,
@@ -42,7 +43,8 @@ function detectAllDay(normalized: string, hasExplicitTime: boolean): boolean {
 }
 
 function stripScheduleTokens(normalized: string): string {
-  return normalized
+  return stripCalendarDateTokens(
+    normalized
     .replace(/모레|내일|오늘|어제/g, ' ')
     .replace(/(\d+|[한두세네다섯여섯일곱여덟아홉십]+)\s*분\s*(?:뒤|후|뒤에|이후)/g, ' ')
     .replace(/(\d+|[한두세네다섯여섯일곱여덟아홉십]+)\s*시간\s*(?:반)?\s*(?:뒤|후|뒤에|이후)?/g, ' ')
@@ -58,7 +60,8 @@ function stripScheduleTokens(normalized: string): string {
     .replace(/^\s*에\s+/g, '')
     .replace(/\s+에\s+/g, ' ')
     .replace(/\s+/g, ' ')
-    .trim();
+    .trim(),
+  );
 }
 
 export function parseKoreanScheduleText(
@@ -100,7 +103,9 @@ export function parseKoreanScheduleText(
     };
   }
 
-  const dateKey = resolveKstDateKey(now, normalized, options.defaultDateKey);
+  const explicitCalendarDate = parseKoreanCalendarDate(normalized, now);
+  const dateKey =
+    explicitCalendarDate ?? resolveKstDateKey(now, normalized, options.defaultDateKey);
 
   const timeResult = parseKoreanTimeExpression(normalized, {
     now,

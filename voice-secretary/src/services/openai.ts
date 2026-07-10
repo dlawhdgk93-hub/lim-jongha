@@ -4,6 +4,7 @@ import { SUPABASE_ANON_KEY, VOICE_PARSE_URL } from '../constants/config';
 import type { ParseScheduleOptions } from '../utils/nlpParser';
 import { parseKoreanScheduleText } from '../utils/nlpParser';
 import { normalizeKoreanSpeechText, hasExplicitScheduleTime } from '../utils/koreanSpeechNormalize';
+import { hasExplicitCalendarDate } from '../utils/koreanDateParse';
 import { getNativeAudioUploadMeta } from '../utils/audioUpload';
 import { supabase } from './supabase';
 import type { VoiceParseResult } from '../types/schedule';
@@ -43,13 +44,13 @@ export async function parseVoiceInput(options: {
     const cleaned = normalizeKoreanSpeechText(options.text.trim());
     const storedRaw = options.rawText?.trim() || options.text.trim();
 
-    if (!hasExplicitScheduleTime(cleaned)) {
+    if (!hasExplicitScheduleTime(cleaned) || hasExplicitCalendarDate(cleaned)) {
       return parseLocally(cleaned, options.parseOptions, storedRaw);
     }
 
     const hasExplicitKoreanTime = /(오전|오후)?\s*\d{1,2}\s*시/.test(cleaned);
 
-    if (hasExplicitKoreanTime) {
+    if (hasExplicitKoreanTime || hasExplicitCalendarDate(cleaned)) {
       const local = parseLocally(cleaned, options.parseOptions, storedRaw);
       // #region agent log
       debugLog(

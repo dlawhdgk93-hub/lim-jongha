@@ -85,6 +85,12 @@ export function getTomorrowKey(now = new Date()): string {
   return getTodayKey(d);
 }
 
+export function getYesterdayKey(now = new Date()): string {
+  const d = new Date(now);
+  d.setDate(d.getDate() - 1);
+  return getTodayKey(d);
+}
+
 export function getScheduleDateKey(isoString: string | null): string {
   if (!isoString) return 'unknown';
   return formatKstDate(new Date(isoString));
@@ -112,28 +118,16 @@ export function dateKeyToDate(dateKey: string): Date | null {
 export function formatDateTabLabel(dateKey: string): string {
   if (dateKey === 'all') return '전체';
   if (dateKey === 'incomplete') return '미완료';
+  if (dateKey === 'calendar') return '달력';
   if (dateKey === 'unknown') return '날짜 미정';
-
-  const todayKey = getTodayKey();
-  const tomorrowKey = getTomorrowKey();
-  if (dateKey === todayKey) return '오늘';
-  if (dateKey === tomorrowKey) return '내일';
 
   const parts = dateKey.split('-');
   if (parts.length !== 3) return dateKey;
 
-  const [y, m, d] = parts.map(Number);
-  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return dateKey;
+  const [, m, d] = parts.map(Number);
+  if (!Number.isFinite(m) || !Number.isFinite(d)) return dateKey;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const target = new Date(y, m - 1, d);
-  target.setHours(0, 0, 0, 0);
-  const diffDays = Math.round((target.getTime() - today.getTime()) / 86400000);
-
-  if (diffDays === -1) return '어제';
-
-  return target.toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric', weekday: 'short' });
+  return `${m}/${d}`;
 }
 
 export function buildDateTabs(
@@ -153,20 +147,22 @@ export function buildDateTabs(
 
   const todayKey = getTodayKey(now);
   const tomorrowKey = getTomorrowKey(now);
+  const yesterdayKey = getYesterdayKey(now);
   const currentMonthKey = getMonthKey(now);
   const monthKey = viewMonthKey ?? currentMonthKey;
   const showTodayTomorrow = monthKey === currentMonthKey;
+  const pinnedKeys = new Set([todayKey, tomorrowKey, yesterdayKey]);
 
   const otherKeys = [...counts.keys()]
     .filter((k) => {
       if (k === 'unknown') return false;
-      if (showTodayTomorrow && (k === todayKey || k === tomorrowKey)) return false;
+      if (showTodayTomorrow && pinnedKeys.has(k)) return false;
       return true;
     })
     .sort((a, b) => b.localeCompare(a));
 
   const orderedKeys = showTodayTomorrow
-    ? [todayKey, tomorrowKey, ...otherKeys]
+    ? [todayKey, tomorrowKey, yesterdayKey, ...otherKeys]
     : otherKeys;
   const seen = new Set<string>();
 

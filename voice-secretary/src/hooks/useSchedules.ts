@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { notifyScheduleShareReceived } from '../services/pushNotification';
 import { fetchSharesForUser, linkScheduleSharesForCurrentUser } from '../services/scheduleShare';
@@ -33,74 +33,86 @@ function enrichSchedules(
   });
 }
 
+type FetchOptions = {
+  silent?: boolean;
+};
+
 export function useSchedules(userId: string | undefined, userEmail: string | undefined) {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const hasLoadedOnceRef = useRef(false);
 
-  const fetchSchedules = useCallback(async () => {
-    if (!userId) {
-      setSchedules([]);
-      void syncSchedulesToWidget([]);
-      setLoading(false);
-      return;
-    }
+  const applySchedules = useCallback((next: Schedule[]) => {
+    setSchedules(next);
+    void syncSchedulesToWidget(next);
+  }, []);
 
-    setLoading(true);
-    setError(null);
-
-    await linkScheduleSharesForCurrentUser();
-
-    const { data, error: fetchError } = await supabase
-      .from('schedules')
-      .select('*')
-      .neq('status', 'cancelled')
-      .order('target_timestamp', { ascending: false, nullsFirst: false });
-
-    if (fetchError) {
-      setError(fetchError.message);
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const parsed = (data ?? []).map(parseScheduleRow);
-      const { ownedShares } = await fetchSharesForUser(userId, userEmail);
-
-      const foreignOwnerIds = [
-        ...new Set(parsed.filter((s) => s.user_id !== userId).map((s) => s.user_id)),
-      ];
-      const ownerEmails = new Map<string, string | null>();
-      if (foreignOwnerIds.length > 0) {
-        const { data: profiles } = await supabase
-          .from('profiles')
-          .select('id, email')
-          .in('id', foreignOwnerIds);
-        for (const profile of profiles ?? []) {
-          ownerEmails.set(profile.id, profile.email);
-        }
+  const fetchSchedules = useCallback(
+    async (options: FetchOptions = {}) => {
+      if (!userId) {
+        applySchedules([]);
+        setLoading(false);
+        return;
       }
 
-      const nextSchedules = enrichSchedules(parsed, userId, ownedShares, ownerEmails);
-      setSchedules(nextSchedules);
-      void syncSchedulesToWidget(nextSchedules);
-    } catch (err) {
-      setError((err as Error).message);
-      const fallback = (data ?? []).map(parseScheduleRow);
-      setSchedules(fallback);
-      void syncSchedulesToWidget(fallback);
-    }
+      const silent = options.silent ?? hasLoadedOnceRef.current;
+      if (!silent) setLoading(true);
+      setError(null);
 
-    setLoading(false);
-  }, [userId, userEmail]);
+      await linkScheduleSharesForCurrentUser();
+
+      const { data, error: fetchError } = await supabase
+        .from('schedules')
+        .select('*')
+        .neq('status', 'cancelled')
+        .order('target_timestamp', { ascending: false, nullsFirst: false });
+
+      if (fetchError) {
+        setError(fetchError.message);
+        if (!silent) setLoading(false);
+        return;
+      }
+
+      try {
+        const parsed = (data ?? []).map(parseScheduleRow);
+        const { ownedShares } = await fetchSharesForUser(userId, userEmail);
+
+        const foreignOwnerIds = [
+          ...new Set(parsed.filter((s) => s.user_id !== userId).map((s) => s.user_id)),
+        ];
+        const ownerEmails = new Map<string, string | null>();
+        if (foreignOwnerIds.length > 0) {
+          const { data: profiles } = await supabase
+            .from('profiles')
+            .select('id, email')
+            .in('id', foreignOwnerIds);
+          for (const profile of profiles ?? []) {
+            ownerEmails.set(profile.id, profile.email);
+          }
+        }
+
+        applySchedules(enrichSchedules(parsed, userId, ownedShares, ownerEmails));
+      } catch (err) {
+        setError((err as Error).message);
+        const fallback = (data ?? []).map(parseScheduleRow);
+        applySchedules(fallback);
+      }
+
+      hasLoadedOnceRef.current = true;
+      if (!silent) setLoading(false);
+    },
+    [applySchedules, userEmail, userId],
+  );
 
   useEffect(() => {
-    fetchSchedules();
+    hasLoadedOnceRef.current = false;
+    void fetchSchedules();
   }, [fetchSchedules]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') fetchSchedules();
+      if (state === 'active') void fetchSchedules({ silent: true });
     });
     return () => sub.remove();
   }, [fetchSchedules]);
@@ -147,7 +159,7 @@ export function useSchedules(userId: string | undefined, userEmail: string | und
           filter: `user_id=eq.${userId}`,
         },
         () => {
-          fetchSchedules();
+          void fetchSchedules({ silent: true });
         },
       )
       .subscribe();
@@ -165,21 +177,21 @@ export function useSchedules(userId: string | undefined, userEmail: string | und
             shared_with_user_id: string | null;
           };
           void handleIncomingShare(row);
-          fetchSchedules();
+          void fetchSchedules({ silent: true });
         },
       )
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'schedule_shares' },
         () => {
-          fetchSchedules();
+          void fetchSchedules({ silent: true });
         },
       )
       .on(
         'postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'schedule_shares' },
         () => {
-          fetchSchedules();
+          void fetchSchedules({ silent: true });
         },
       )
       .subscribe();
@@ -192,28 +204,67 @@ export function useSchedules(userId: string | undefined, userEmail: string | und
 
   const updateSchedule = useCallback(
     async (id: string, updates: Record<string, unknown>) => {
+      setSchedules((prev) => {
+        const next = prev.map((schedule) =>
+          schedule.id === id
+            ? {
+                ...schedule,
+                ...updates,
+                parsed_content: updates.parsed_content
+                  ? { ...schedule.parsed_content, ...(updates.parsed_content as object) }
+                  : schedule.parsed_content,
+                updated_at: new Date().toISOString(),
+              }
+            : schedule,
+        );
+        void syncSchedulesToWidget(next);
+        return next;
+      });
+
       const { error: updateError } = await supabase
         .from('schedules')
         .update(updates)
         .eq('id', id);
 
-      if (updateError) throw updateError;
-      await fetchSchedules();
+      if (updateError) {
+        await fetchSchedules({ silent: true });
+        throw updateError;
+      }
+    },
+    [fetchSchedules],
+  );
+
+  const deleteSchedules = useCallback(
+    async (ids: string[]) => {
+      const uniqueIds = [...new Set(ids)];
+      if (uniqueIds.length === 0) return;
+
+      const idSet = new Set(uniqueIds);
+      setSchedules((prev) => {
+        const next = prev.filter((schedule) => !idSet.has(schedule.id));
+        void syncSchedulesToWidget(next);
+        return next;
+      });
+
+      const cancelledAt = new Date().toISOString();
+      const { error: deleteError } = await supabase
+        .from('schedules')
+        .update({ status: 'cancelled', updated_at: cancelledAt })
+        .in('id', uniqueIds);
+
+      if (deleteError) {
+        await fetchSchedules({ silent: true });
+        throw deleteError;
+      }
     },
     [fetchSchedules],
   );
 
   const deleteSchedule = useCallback(
     async (id: string) => {
-      const { error: deleteError } = await supabase
-        .from('schedules')
-        .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-        .eq('id', id);
-
-      if (deleteError) throw deleteError;
-      await fetchSchedules();
+      await deleteSchedules([id]);
     },
-    [fetchSchedules],
+    [deleteSchedules],
   );
 
   return {
@@ -223,6 +274,7 @@ export function useSchedules(userId: string | undefined, userEmail: string | und
     refresh: fetchSchedules,
     updateSchedule,
     deleteSchedule,
+    deleteSchedules,
   };
 }
 

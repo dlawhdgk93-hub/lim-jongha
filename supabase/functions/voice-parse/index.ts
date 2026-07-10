@@ -50,6 +50,64 @@ function resolveKstDateKey(now: Date, normalized: string, defaultDateKey = ""): 
   return today;
 }
 
+function inferYearForMonthDay(month: number, day: number, now: Date): number {
+  const today = formatKstDate(now);
+  const [year, todayMonth, todayDay] = today.split("-").map(Number);
+  if (month < todayMonth || (month === todayMonth && day < todayDay)) return year + 1;
+  return year;
+}
+
+function isValidDateKey(year: number, month: number, day: number): string | null {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const date = new Date(`${year}-${pad2(month)}-${pad2(day)}T12:00:00+09:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  const kst = new Date(date.getTime() + KST_OFFSET_MS);
+  if (kst.getUTCMonth() + 1 !== month || kst.getUTCDate() !== day) return null;
+  return `${year}-${pad2(month)}-${pad2(day)}`;
+}
+
+function parseKoreanCalendarDate(text: string, now = new Date()): string | null {
+  const normalized = text.replace(/\s+/g, " ").trim();
+
+  const fullDate = normalized.match(/(\d{4})\s*(?:년\s*)?(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
+  if (fullDate) {
+    return isValidDateKey(parseInt(fullDate[1], 10), parseInt(fullDate[2], 10), parseInt(fullDate[3], 10));
+  }
+
+  const isoLike = normalized.match(/(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})/);
+  if (isoLike) {
+    return isValidDateKey(parseInt(isoLike[1], 10), parseInt(isoLike[2], 10), parseInt(isoLike[3], 10));
+  }
+
+  const monthDay = normalized.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
+  if (monthDay) {
+    const month = parseInt(monthDay[1], 10);
+    const day = parseInt(monthDay[2], 10);
+    return isValidDateKey(inferYearForMonthDay(month, day, now), month, day);
+  }
+
+  const slashDate = normalized.match(/(?:^|[^\d])(\d{1,2})\s*[/\-.]\s*(\d{1,2})(?:\s*일)?(?=\s|[^0-9]|$)/);
+  if (slashDate) {
+    const month = parseInt(slashDate[1], 10);
+    const day = parseInt(slashDate[2], 10);
+    if (month >= 1 && month <= 12) {
+      return isValidDateKey(inferYearForMonthDay(month, day, now), month, day);
+    }
+  }
+
+  return null;
+}
+
+function stripCalendarDateTokens(text: string): string {
+  return text
+    .replace(/\d{4}\s*(?:년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일/g, " ")
+    .replace(/\d{4}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*\d{1,2}/g, " ")
+    .replace(/\d{1,2}\s*월\s*\d{1,2}\s*일/g, " ")
+    .replace(/(?:^|\s)\d{1,2}\s*[/\-.]\s*\d{1,2}(?:\s*일)?(?=\s|$)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function kstInstantMs(dateKey: string, hour: number, minute: number): number {
   return new Date(`${dateKey}T${pad2(hour)}:${pad2(minute)}:00+09:00`).getTime();
 }
@@ -108,7 +166,8 @@ function buildScheduleTimestamp(date: string, time: string, isAllDay = false): s
 }
 
 function stripScheduleTokens(normalized: string): string {
-  return normalized
+  return stripCalendarDateTokens(
+    normalized
     .replace(/내일|모레|오늘|어제/g, " ")
     .replace(/(\d+)\s*분\s*(?:뒤|후|뒤에|이후)/g, " ")
     .replace(/(\d+)\s*시간\s*(?:반)?\s*(?:뒤|후|뒤에|이후)?/g, " ")
@@ -119,7 +178,8 @@ function stripScheduleTokens(normalized: string): string {
     .replace(/^\s*에\s+/g, "")
     .replace(/\s+에\s+/g, " ")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim(),
+  );
 }
 
 function hasExplicitScheduleTime(text: string): boolean {
@@ -200,7 +260,7 @@ function parseKoreanScheduleText(text: string, defaultDateKey = "", now = new Da
     };
   }
 
-  const dateKey = resolveKstDateKey(now, normalized, defaultDateKey);
+  const dateKey = parseKoreanCalendarDate(normalized, now) ?? resolveKstDateKey(now, normalized, defaultDateKey);
   const timeMatch = normalized.match(/(오전|오후)?\s*(\d{1,2})\s*시(?:\s*(\d{1,2})\s*분)?/);
   const colonMatch = normalized.match(/(오전|오후)?\s*(\d{1,2})\s*:\s*(\d{1,2})/);
   const hasExplicitTime = !!(timeMatch || colonMatch);
@@ -297,7 +357,7 @@ async function parseWithGpt(apiKey: string, text: string, defaultDateKey = "") {
         {
           role: "system",
           content:
-            "Extract schedule JSON from Korean text. Return JSON: {title, date(YYYY-MM-DD), time(HH:mm or empty), is_all_day(boolean), notes?, contact_name?, phone?}. Use Asia/Seoul. Support relative times like '30분 뒤', '1시간 후'. If no specific time needed use is_all_day:true and empty time. defaultDateKey: " +
+            "Extract schedule JSON from Korean text. Return JSON: {title, date(YYYY-MM-DD), time(HH:mm or empty), is_all_day(boolean), notes?, contact_name?, phone?}. Use Asia/Seoul. Support calendar dates like '7월 24일', '7/24', relative times like '30분 뒤', '1시간 후'. If no specific time needed use is_all_day:true and empty time. defaultDateKey: " +
             (defaultDateKey || "none"),
         },
         { role: "user", content: text },
@@ -407,9 +467,10 @@ Deno.serve(async (req: Request) => {
     const openaiKey = Deno.env.get("OPENAI_API_KEY");
     const hasExplicitKoreanTime = /(오전|오후)?\s*\d{1,2}\s*시/.test(text.trim());
     const hasTime = hasExplicitScheduleTime(text.trim());
+    const hasCalendar = parseKoreanCalendarDate(text.trim()) !== null;
     let parsed;
     try {
-      if (!hasTime || hasExplicitKoreanTime) {
+      if (!hasTime || hasExplicitKoreanTime || hasCalendar) {
         parsed = parseKoreanScheduleText(text, defaultDateKey);
       } else {
         parsed = openaiKey

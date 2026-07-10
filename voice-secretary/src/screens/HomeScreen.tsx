@@ -149,7 +149,7 @@ export function HomeScreen({ navigation }: Props) {
   const colors = useThemeColors();
   const user = useAuthStore((s) => s.user);
   const userId = user?.id;
-  const { schedules, loading, refresh, updateSchedule, deleteSchedule } = useSchedules(
+  const { schedules, loading, refresh, updateSchedule, deleteSchedule, deleteSchedules } = useSchedules(
     userId,
     user?.email,
   );
@@ -277,19 +277,25 @@ export function HomeScreen({ navigation }: Props) {
 
     setDeleting(true);
     try {
-      for (const id of ids) {
-        clearAlarmFired(id);
-        await clearNativeAlarmFired(id);
-        await deleteSchedule(id);
-      }
+      await Promise.all(
+        ids.map(async (id) => {
+          clearAlarmFired(id);
+          await clearNativeAlarmFired(id);
+        }),
+      );
+      await deleteSchedules(ids);
       exitSelectionMode();
-      await refresh();
     } catch (err) {
       showAppAlert('삭제 실패', (err as Error).message);
     } finally {
       setDeleting(false);
     }
-  }, [deleteSchedule, exitSelectionMode, refresh]);
+  }, [deleteSchedules, exitSelectionMode]);
+
+  const handleCalendarSelectDate = useCallback((dateKey: string) => {
+    setSelectedMonthKey(dateKey.slice(0, 7));
+    setSelectedDateKey(dateKey);
+  }, []);
 
   const confirmBulkDelete = useCallback(() => {
     const count = selectedIdsRef.current.size;
@@ -699,7 +705,7 @@ export function HomeScreen({ navigation }: Props) {
             <ScheduleCalendar
               monthKey={selectedMonthKey}
               schedules={monthSchedules}
-              onSelectDate={setSelectedDateKey}
+              onSelectDate={handleCalendarSelectDate}
               onSchedulePress={handleSchedulePress}
               onScheduleLongPress={handleScheduleLongPress}
             />
@@ -769,7 +775,7 @@ export function HomeScreen({ navigation }: Props) {
           setDetailScheduleId(null);
           if (selectionMode) exitSelectionMode();
         }}
-        onChanged={refresh}
+        onChanged={() => refresh({ silent: true })}
         updateSchedule={updateSchedule}
         deleteSchedule={deleteSchedule}
         onOpenShareHub={() => {
