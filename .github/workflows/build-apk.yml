@@ -63,27 +63,27 @@ jobs:
           ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Prepare phone-friendly APK name
-        run: cp android/app/build/outputs/apk/release/app-release.apk teamday-v1.0.19.apk
+        run:           cp android/app/build/outputs/apk/release/app-release.apk teamday-v1.0.20.apk
 
       - name: Publish GitHub Release (phone download)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.19
-          name: TeamDay v1.0.19
+          tag_name: v1.0.20
+          name: TeamDay v1.0.20
           body: |
-            폰 브라우저에서 teamday-v1.0.19.apk 를 눌러 바로 설치하세요.
+            폰 브라우저에서 teamday-v1.0.20.apk 를 눌러 바로 설치하세요.
             기존 팀데이 앱이 있으면 먼저 삭제한 뒤 설치하세요.
-          files: voice-secretary/teamday-v1.0.19.apk
+          files: voice-secretary/teamday-v1.0.20.apk
           make_latest: true
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: teamday-apk
-          path: voice-secretary/teamday-v1.0.19.apk
+          path: voice-secretary/teamday-v1.0.20.apk
           if-no-files-found: error
 
       - name: Summary
         run: |
-          ls -lh teamday-v1.0.19.apk
-          echo "Download: https://github.com/dlawhdgk93-hub/lim-jongha/releases/latest/download/teamday-v1.0.19.apk"
+          ls -lh teamday-v1.0.20.apk
+          echo "Download: https://github.com/dlawhdgk93-hub/lim-jongha/releases/latest/download/teamday-v1.0.20.apk"

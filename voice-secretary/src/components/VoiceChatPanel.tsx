@@ -17,7 +17,11 @@ import { useThemeColors, useThemedStyles } from '../hooks/useThemedStyles';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { formatTranscriptLines } from '../utils/transcriptDisplay';
 import { buildScheduleTimestamp } from '../utils/timeAdjust';
-import { parseKoreanScheduleText } from '../utils/nlpParser';
+import {
+  getRecordingDateHintFromIso,
+  parseKoreanScheduleText,
+} from '../utils/nlpParser';
+import { debugLog } from '../utils/debugLog';
 import type { VoiceParseResult } from '../types/schedule';
 import { TimeAdjuster } from './TimeAdjuster';
 import { AlarmModePicker } from './AlarmModePicker';
@@ -259,6 +263,9 @@ export function VoiceChatPanel({
   const [pendingRawText, setPendingRawText] = useState<string | null>(null);
   const [alarmMode, setAlarmMode] = useState<AlarmMode>(DEFAULT_ALARM_MODE);
   const listRef = useRef<FlatList<ChatMessage>>(null);
+  const micPressInFlightRef = useRef(false);
+  const parseInFlightRef = useRef(false);
+  const parseInvocationRef = useRef(0);
 
   const { isSupported, isListening, interimRaw, startListening, stopListening } =
     useSpeechRecognition();
@@ -291,6 +298,56 @@ export function VoiceChatPanel({
       ? isNativeRecording
       : isListening;
 
+  const activeRecordingHint = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.voiceChoice) {
+        const date = message.voiceChoice.aiResult.schedule.parsed_content.date;
+        return getRecordingDateHintFromIso(date);
+      }
+      if (message.preview) {
+        const date = message.preview.schedule.parsed_content.date;
+        return getRecordingDateHintFromIso(date);
+      }
+    }
+
+    const interim = (deviceInterimText || interimRaw || '').trim();
+    if (interim) {
+      const parsed = parseKoreanScheduleText(interim, { defaultDateKey });
+      const parsedHint = getRecordingDateHintFromIso(parsed.parsed_content.date);
+      if (parsedHint && parsedHint !== recordingDateHint) {
+        return parsedHint;
+      }
+    }
+
+    return recordingDateHint;
+  }, [
+    messages,
+    recordingDateHint,
+    defaultDateKey,
+    deviceInterimText,
+    interimRaw,
+  ]);
+
+  useEffect(() => {
+    if (!activeRecordingHint && !recordingDateHint) return;
+    // #region agent log
+    debugLog(
+      'VoiceChatPanel:activeRecordingHint',
+      'hint resolved',
+      {
+        tabHint: recordingDateHint ?? null,
+        activeHint: activeRecordingHint ?? null,
+        defaultDateKey: defaultDateKey ?? null,
+        hasVoiceChoice: messages.some((m) => !!m.voiceChoice),
+        hasPreview: messages.some((m) => !!m.preview),
+        interimLen: (deviceInterimText || interimRaw || '').trim().length,
+      },
+      'H1',
+    );
+    // #endregion
+  }, [activeRecordingHint, recordingDateHint, defaultDateKey, messages, deviceInterimText, interimRaw]);
+
   const appendMessage = useCallback((msg: Omit<ChatMessage, 'id'>) => {
     setMessages((prev) => [...prev, { ...msg, id: `${Date.now()}-${Math.random()}` }]);
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
@@ -308,7 +365,35 @@ export function VoiceChatPanel({
     async (text: string, rawText?: string) => {
       const transcript = formatTranscriptLines(rawText?.trim() ? rawText : text);
       const parseText = transcript.normalized || transcript.raw;
-      if (!parseText || parsing) return;
+      if (!parseText || parsing || parseInFlightRef.current) {
+        // #region agent log
+        debugLog(
+          'VoiceChatPanel:handleParse',
+          'parse skipped',
+          {
+            reason: !parseText ? 'empty' : parsing ? 'parsing-state' : 'in-flight-ref',
+            text: parseText?.slice(0, 80) ?? '',
+          },
+          'D3',
+        );
+        // #endregion
+        return;
+      }
+
+      parseInFlightRef.current = true;
+      const invocationId = ++parseInvocationRef.current;
+      // #region agent log
+      debugLog(
+        'VoiceChatPanel:handleParse',
+        'parse started',
+        {
+          invocationId,
+          text: parseText.slice(0, 80),
+          fromVoice: !!rawText?.trim(),
+        },
+        'D3',
+      );
+      // #endregion
 
       setExpandedState(true);
       appendMessage({ role: 'user', text: transcript.display || parseText });
@@ -325,6 +410,22 @@ export function VoiceChatPanel({
           const withoutLoading = prev.slice(0, -1);
           const fromVoice = !!rawText?.trim();
           if (fromVoice) {
+            const localPreview = buildTranscriptPreview(voiceTranscript, defaultDateKey);
+            // #region agent log
+            debugLog(
+              'VoiceChatPanel:handleParse',
+              'voice choice dates',
+              {
+                invocationId,
+                tabDefaultDateKey: defaultDateKey ?? null,
+                tabHint: recordingDateHint ?? null,
+                transcriptDate: localPreview.schedule.parsed_content.date,
+                aiDate: result.schedule.parsed_content.date,
+                transcript: voiceTranscript,
+              },
+              'H2',
+            );
+            // #endregion
             return [
               ...withoutLoading,
               {
@@ -357,149 +458,183 @@ export function VoiceChatPanel({
             },
           ];
         });
+      } finally {
+        parseInFlightRef.current = false;
       }
     },
-    [appendMessage, onParseText, parsing, setExpandedState],
+    [appendMessage, onParseText, parsing, setExpandedState, defaultDateKey, recordingDateHint],
   );
 
   const handleMicPress = useCallback(async () => {
-    setExpandedState(true);
-
-    if (useDeviceMic) {
-      if (parsing) return;
-
-      if (isDeviceListening) {
-        try {
-          let spoken = (await stopDeviceListening()).trim();
-          if (!spoken && deviceInterimText.trim()) {
-            spoken = deviceInterimText.trim();
-            abortDeviceListening();
-          }
-          if (!spoken) {
-            appendMessage({ role: 'assistant', text: '말씀이 감지되지 않았습니다. 다시 시도해 주세요.' });
-            return;
-          }
-          await handleParse(spoken, spoken);
-        } catch (err) {
-          appendMessage({ role: 'assistant', text: (err as Error).message });
-        }
-        return;
-      }
-
-      try {
-        await startDeviceListening();
-      } catch (err) {
-        abortDeviceListening();
-        const granted = permissionGranted ?? (await requestPermission());
-        if (granted) {
-          try {
-            await startRecording();
-            appendMessage({
-              role: 'assistant',
-              text: `${(err as Error).message}\n녹음 모드로 전환했습니다. 말씀 후 마이크를 다시 눌러 주세요.`,
-            });
-          } catch (recordErr) {
-            appendMessage({ role: 'assistant', text: (recordErr as Error).message });
-          }
-        } else {
-          appendMessage({ role: 'assistant', text: (err as Error).message });
-        }
-      }
+    if (micPressInFlightRef.current) {
+      // #region agent log
+      debugLog('VoiceChatPanel:handleMicPress', 'mic press skipped (in flight)', {}, 'D4');
+      // #endregion
       return;
     }
+    micPressInFlightRef.current = true;
+    // #region agent log
+    debugLog(
+      'VoiceChatPanel:handleMicPress',
+      'mic press started',
+      {
+        useDeviceMic,
+        isDeviceListening,
+        parsing,
+      },
+      'D4',
+    );
+    // #endregion
 
-    if (useMicRecording) {
-      if (parsing) return;
+    try {
+      setExpandedState(true);
 
-      if (isNativeRecording) {
-        try {
-          const uri = await stopRecording();
-          if (!uri) {
-            appendMessage({ role: 'assistant', text: '녹음에 실패했습니다. 다시 시도해 주세요.' });
-            return;
-          }
-          if (!onParseAudio) {
-            appendMessage({ role: 'assistant', text: '음성 분석 기능을 사용할 수 없습니다.' });
-            return;
-          }
+      if (useDeviceMic) {
+        if (parsing) return;
 
-          appendMessage({ role: 'user', text: '🎤 음성으로 일정 등록' });
-          appendMessage({ role: 'assistant', text: '녹음을 분석하고 있어요...' });
-
+        if (isDeviceListening) {
           try {
-            const result = await onParseAudio(uri);
-            const transcript = result.schedule.raw_text?.trim() || '음성 인식 결과 없음';
-            setMessages((prev) => {
-              const withoutLoading = prev.slice(0, -1);
-              return [
-                ...withoutLoading,
-                {
-                  id: `${Date.now()}-choice`,
-                  role: 'assistant',
-                  text: '음성 인식 결과와 AI 추천 중 선택해 주세요.',
-                  voiceChoice: { transcript, aiResult: result },
-                },
-              ];
-            });
+            let spoken = (await stopDeviceListening()).trim();
+            if (!spoken && deviceInterimText.trim()) {
+              spoken = deviceInterimText.trim();
+              abortDeviceListening();
+            }
+            if (!spoken) {
+              appendMessage({ role: 'assistant', text: '말씀이 감지되지 않았습니다. 다시 시도해 주세요.' });
+              return;
+            }
+            // #region agent log
+            debugLog(
+              'VoiceChatPanel:handleMicPress',
+              'stop listening -> parse',
+              { spoken: spoken.slice(0, 80) },
+              'D1',
+            );
+            // #endregion
+            await handleParse(spoken, spoken);
           } catch (err) {
-            setMessages((prev) => {
-              const withoutLoading = prev.slice(0, -1);
-              return [
-                ...withoutLoading,
-                {
-                  id: `${Date.now()}-err`,
-                  role: 'assistant',
-                  text: `분석 실패: ${(err as Error).message}`,
-                },
-              ];
-            });
+            appendMessage({ role: 'assistant', text: (err as Error).message });
           }
+          return;
+        }
+
+        try {
+          await startDeviceListening();
+        } catch (err) {
+          abortDeviceListening();
+          const granted = permissionGranted ?? (await requestPermission());
+          if (granted) {
+            try {
+              await startRecording();
+              appendMessage({
+                role: 'assistant',
+                text: `${(err as Error).message}\n녹음 모드로 전환했습니다. 말씀 후 마이크를 다시 눌러 주세요.`,
+              });
+            } catch (recordErr) {
+              appendMessage({ role: 'assistant', text: (recordErr as Error).message });
+            }
+          } else {
+            appendMessage({ role: 'assistant', text: (err as Error).message });
+          }
+        }
+        return;
+      }
+
+      if (useMicRecording) {
+        if (parsing) return;
+
+        if (isNativeRecording) {
+          try {
+            const uri = await stopRecording();
+            if (!uri) {
+              appendMessage({ role: 'assistant', text: '녹음에 실패했습니다. 다시 시도해 주세요.' });
+              return;
+            }
+            if (!onParseAudio) {
+              appendMessage({ role: 'assistant', text: '음성 분석 기능을 사용할 수 없습니다.' });
+              return;
+            }
+
+            appendMessage({ role: 'user', text: '🎤 음성으로 일정 등록' });
+            appendMessage({ role: 'assistant', text: '녹음을 분석하고 있어요...' });
+
+            try {
+              const result = await onParseAudio(uri);
+              const transcript = result.schedule.raw_text?.trim() || '음성 인식 결과 없음';
+              setMessages((prev) => {
+                const withoutLoading = prev.slice(0, -1);
+                return [
+                  ...withoutLoading,
+                  {
+                    id: `${Date.now()}-choice`,
+                    role: 'assistant',
+                    text: '음성 인식 결과와 AI 추천 중 선택해 주세요.',
+                    voiceChoice: { transcript, aiResult: result },
+                  },
+                ];
+              });
+            } catch (err) {
+              setMessages((prev) => {
+                const withoutLoading = prev.slice(0, -1);
+                return [
+                  ...withoutLoading,
+                  {
+                    id: `${Date.now()}-err`,
+                    role: 'assistant',
+                    text: `분석 실패: ${(err as Error).message}`,
+                  },
+                ];
+              });
+            }
+          } catch (err) {
+            appendMessage({ role: 'assistant', text: (err as Error).message });
+          }
+          return;
+        }
+
+        const granted = permissionGranted ?? (await requestPermission());
+        if (!granted) {
+          appendMessage({
+            role: 'assistant',
+            text: '마이크 권한이 필요합니다. 휴대폰 설정에서 마이크를 허용해 주세요.',
+          });
+          return;
+        }
+
+        try {
+          await startRecording();
         } catch (err) {
           appendMessage({ role: 'assistant', text: (err as Error).message });
         }
         return;
       }
 
-      const granted = permissionGranted ?? (await requestPermission());
-      if (!granted) {
-        appendMessage({
-          role: 'assistant',
-          text: '마이크 권한이 필요합니다. 휴대폰 설정에서 마이크를 허용해 주세요.',
-        });
+      if (isListening) {
+        stopListening();
         return;
       }
 
-      try {
-        await startRecording();
-      } catch (err) {
-        appendMessage({ role: 'assistant', text: (err as Error).message });
+      if (isSupported) {
+        startListening(
+          (raw) => {
+            const transcript = formatTranscriptLines(raw);
+            setPendingRawText(transcript.raw);
+            setTextInput(transcript.normalized || transcript.raw);
+          },
+          (err) => {
+            appendMessage({ role: 'assistant', text: err ?? '음성 인식 오류' });
+          },
+        );
+        return;
       }
-      return;
-    }
 
-    if (isListening) {
-      stopListening();
-      return;
+      appendMessage({
+        role: 'assistant',
+        text: '음성 인식을 지원하지 않는 환경입니다. 아래에 직접 입력해 주세요.',
+      });
+    } finally {
+      micPressInFlightRef.current = false;
     }
-
-    if (isSupported) {
-      startListening(
-        (raw) => {
-          const transcript = formatTranscriptLines(raw);
-          setPendingRawText(transcript.raw);
-          setTextInput(transcript.normalized || transcript.raw);
-        },
-        (err) => {
-          appendMessage({ role: 'assistant', text: err ?? '음성 인식 오류' });
-        },
-      );
-      return;
-    }
-
-    appendMessage({
-      role: 'assistant',
-      text: '음성 인식을 지원하지 않는 환경입니다. 아래에 직접 입력해 주세요.',
-    });
   }, [
     appendMessage,
     handleParse,
@@ -738,8 +873,8 @@ export function VoiceChatPanel({
       <Pressable style={styles.handleRow} onPress={() => setExpandedState(!expanded)}>
         <View style={styles.handleLeft}>
           <Text style={styles.handleTitle}>🎤 음성 일정 입력</Text>
-          {recordingDateHint ? (
-            <Text style={styles.handleHint}>{recordingDateHint}</Text>
+          {activeRecordingHint ? (
+            <Text style={styles.handleHint}>{activeRecordingHint}</Text>
           ) : null}
         </View>
         <Text style={styles.handleToggle}>{expanded ? '접기 ▼' : '펼치기 ▲'}</Text>

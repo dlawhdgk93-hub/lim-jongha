@@ -6,7 +6,7 @@ import {
   parseRelativeTimeOffset,
 } from './koreanSpeechNormalize';
 import { stripCalendarDateTokens, parseKoreanCalendarDate } from './koreanDateParse';
-import { dateKeyToDate } from './scheduleDates';
+import { dateKeyToDate, getScheduleDateKey } from './scheduleDates';
 import {
   buildScheduleTimestamp,
   formatKstDate,
@@ -184,12 +184,12 @@ export function getRecordingDateHint(dateKey: string): string | null {
   if (dateKey === 'all' || dateKey === 'incomplete') return null;
   const d = dateKeyToDate(dateKey);
   if (!d) return null;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const target = new Date(d);
-  target.setHours(0, 0, 0, 0);
-  const diff = Math.round((target.getTime() - today.getTime()) / 86400000);
-  if (diff === 0) return '오늘 날짜로 기록됩니다';
-  if (diff === 1) return '내일 날짜로 기록됩니다';
-  return `${d.getMonth() + 1}월 ${d.getDate()}일로 기록됩니다`;
+  return `${d.getMonth() + 1}/${d.getDate()} 일정으로 기록됩니다`;
+}
+
+export function getRecordingDateHintFromIso(isoOrDateKey: string): string | null {
+  const dateKey = isoOrDateKey.includes('T')
+    ? getScheduleDateKey(isoOrDateKey)
+    : isoOrDateKey;
+  return getRecordingDateHint(dateKey);
 }

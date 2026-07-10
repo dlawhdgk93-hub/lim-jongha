@@ -230,6 +230,15 @@ export function useDeviceSpeechRecognitionImpl(): DeviceSpeechApi {
 
       const text = (finalTextRef.current || interimTextRef.current).trim();
 
+      // #region agent log
+      debugLog(
+        'useDeviceSpeechRecognition.native.ts:end',
+        'resolve stop from end event',
+        { text: text.slice(0, 80) },
+        'D5',
+      );
+      // #endregion
+
       resolveStopRef.current(text);
 
       clearStopWaiters();
@@ -273,6 +282,14 @@ export function useDeviceSpeechRecognitionImpl(): DeviceSpeechApi {
       // #endregion
 
       if (resolveStopRef.current) {
+        // #region agent log
+        debugLog(
+          'useDeviceSpeechRecognition.native.ts:result',
+          'resolve stop from final result',
+          { transcript: transcript.slice(0, 80) },
+          'D5',
+        );
+        // #endregion
         resolveStopRef.current(transcript);
         clearStopWaiters();
       }
@@ -281,19 +298,6 @@ export function useDeviceSpeechRecognitionImpl(): DeviceSpeechApi {
 
     interimTextRef.current = transcript;
     setInterimText(transcript);
-
-    if (resolveStopRef.current) {
-      // #region agent log
-      debugLog(
-        'useDeviceSpeechRecognition.native.ts:result',
-        'resolve stop from interim result',
-        { transcript: transcript.slice(0, 80) },
-        'S8',
-      );
-      // #endregion
-      resolveStopRef.current(transcript);
-      clearStopWaiters();
-    }
   });
 
 
@@ -473,6 +477,8 @@ export function useDeviceSpeechRecognitionImpl(): DeviceSpeechApi {
 
 
   const stopListening = useCallback(async (): Promise<string> => {
+    isListeningRef.current = false;
+    setIsListening(false);
 
     return new Promise((resolve, reject) => {
 
@@ -480,7 +486,9 @@ export function useDeviceSpeechRecognitionImpl(): DeviceSpeechApi {
 
       rejectStopRef.current = reject;
 
-
+      // #region agent log
+      debugLog('useDeviceSpeechRecognition.native.ts:stop', 'stop requested', {}, 'D1');
+      // #endregion
 
       try {
 

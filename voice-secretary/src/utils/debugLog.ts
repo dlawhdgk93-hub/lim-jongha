@@ -1,6 +1,6 @@
 const DEBUG_ENDPOINT =
   'http://127.0.0.1:7313/ingest/24d29639-0495-4bac-ae6b-c827fec233b0';
-const DEBUG_SESSION_ID = '902235';
+const DEBUG_SESSION_ID = 'ebc6f3';
 
 export function debugLog(
   location: string,
