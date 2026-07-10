@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, PanResponder, Platform, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { AlarmOverlay } from '../components/AlarmOverlay';
@@ -382,6 +382,21 @@ export function HomeScreen({ navigation }: Props) {
     [selectedDateKey, tabBarSelectedKey, tabKeys],
   );
 
+  const contentSwipeResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_evt, gesture) =>
+          !selectionMode &&
+          Math.abs(gesture.dx) > 24 &&
+          Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.4,
+        onPanResponderRelease: (_evt, gesture) => {
+          if (gesture.dx <= -56) navigateTab(1);
+          else if (gesture.dx >= 56) navigateTab(-1);
+        },
+      }),
+    [navigateTab, selectionMode],
+  );
+
   const recordingDateHint = getRecordingDateHint(
     isScheduleDateKey(selectedDateKey)
       ? selectedDateKey
@@ -562,7 +577,8 @@ export function HomeScreen({ navigation }: Props) {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      enabled={Platform.OS === 'ios'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
     >
       <View style={styles.header}>
@@ -627,7 +643,6 @@ export function HomeScreen({ navigation }: Props) {
         tabs={dateTabs}
         selectedKey={tabBarSelectedKey}
         onSelect={setSelectedDateKey}
-        onSwipeTab={navigateTab}
       />
 
       <Text style={styles.sectionTitle}>{sectionLabel}</Text>
@@ -699,6 +714,7 @@ export function HomeScreen({ navigation }: Props) {
       <View
         style={styles.listArea}
         onLayout={(event) => setListAreaHeight(event.nativeEvent.layout.height)}
+        {...contentSwipeResponder.panHandlers}
       >
         {loading && !showCalendar && filteredSchedules.length === 0 ? (
           <View style={styles.loadingBox}>

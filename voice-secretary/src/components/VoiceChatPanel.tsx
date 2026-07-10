@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   FlatList,
   Keyboard,
-  KeyboardAvoidingView,
   Platform,
   Pressable,
   Text,
@@ -272,6 +271,7 @@ export function VoiceChatPanel({
   const parseInvocationRef = useRef(0);
   const saveInFlightRef = useRef(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const [inputFocused, setInputFocused] = useState(false);
 
   const { isSupported, isListening, interimRaw, startListening, stopListening } =
     useSpeechRecognition();
@@ -355,19 +355,38 @@ export function VoiceChatPanel({
   }, [activeRecordingHint, recordingDateHint, defaultDateKey, messages, deviceInterimText, interimRaw]);
 
   useEffect(() => {
+    if (Platform.OS === 'android') return undefined;
+
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const showSub = Keyboard.addListener(showEvent, (event) => {
-      setKeyboardInset(event.endCoordinates.height);
+      const height = event.endCoordinates.height;
+      setKeyboardInset(height);
+      // #region agent log
+      debugLog(
+        'VoiceChatPanel:keyboard',
+        'keyboard show',
+        { height, platform: Platform.OS },
+        'K1',
+      );
+      // #endregion
     });
     const hideSub = Keyboard.addListener(hideEvent, () => {
       setKeyboardInset(0);
+      // #region agent log
+      debugLog('VoiceChatPanel:keyboard', 'keyboard hide', { platform: Platform.OS }, 'K1');
+      // #endregion
     });
     return () => {
       showSub.remove();
       hideSub.remove();
     };
   }, []);
+
+  useEffect(() => {
+    if (!useDeviceMic || !isDeviceListening) return;
+    setTextInput(deviceInterimText);
+  }, [useDeviceMic, isDeviceListening, deviceInterimText]);
 
   const appendMessage = useCallback((msg: Omit<ChatMessage, 'id'>) => {
     setMessages((prev) => [...prev, { ...msg, id: `${Date.now()}-${Math.random()}` }]);
@@ -888,10 +907,28 @@ export function VoiceChatPanel({
     useMicRecording,
   ]);
 
+  const showTranscriptBox = Boolean(listeningHint) && !useDeviceMic && !inputFocused;
+
+  useEffect(() => {
+    // #region agent log
+    debugLog(
+      'VoiceChatPanel:layout',
+      'input panel state',
+      {
+        showTranscriptBox,
+        inputFocused,
+        keyboardInset,
+        micActive,
+        listeningHintLen: listeningHint?.length ?? 0,
+        platform: Platform.OS,
+      },
+      'K2',
+    );
+    // #endregion
+  }, [showTranscriptBox, inputFocused, keyboardInset, micActive, listeningHint]);
+
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : 0}
+    <View
       style={[
         styles.panel,
         expanded && styles.panelExpanded,
@@ -1056,7 +1093,7 @@ export function VoiceChatPanel({
         />
       ) : null}
 
-      {listeningHint ? (
+      {showTranscriptBox ? (
         <View style={styles.transcriptBox}>
           <Text style={styles.transcriptLabel}>음성 인식 결과 (전송 전 수정 가능)</Text>
           <Text style={styles.interim} numberOfLines={4}>
@@ -1084,6 +1121,18 @@ export function VoiceChatPanel({
           placeholderTextColor={colors.textMuted}
           value={textInput}
           onChangeText={setTextInput}
+          onFocus={() => {
+            setInputFocused(true);
+            // #region agent log
+            debugLog('VoiceChatPanel:textInput', 'focus', { micActive }, 'K3');
+            // #endregion
+          }}
+          onBlur={() => {
+            setInputFocused(false);
+            // #region agent log
+            debugLog('VoiceChatPanel:textInput', 'blur', { micActive }, 'K3');
+            // #endregion
+          }}
           onSubmitEditing={handleTextSend}
           editable={!parsing && (!micActive || canSendDuringListening)}
           returnKeyType="send"
@@ -1101,6 +1150,6 @@ export function VoiceChatPanel({
           <Text style={styles.sendBtnText}>전송</Text>
         </Pressable>
       </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
