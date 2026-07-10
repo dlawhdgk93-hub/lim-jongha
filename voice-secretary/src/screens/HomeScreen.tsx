@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, PanResponder, Platform, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { AlarmOverlay } from '../components/AlarmOverlay';
@@ -9,6 +9,7 @@ import { ScheduleCalendar } from '../components/ScheduleCalendar';
 import { ScheduleCard } from '../components/ScheduleCard';
 import { ScheduleDetailModal } from '../components/ScheduleDetailModal';
 import { ScheduleSearchModal } from '../components/ScheduleSearchModal';
+import { ScheduleTabSwipePager } from '../components/ScheduleTabSwipePager';
 import { SharePickerModal } from '../components/SharePickerModal';
 import { VoiceChatPanel } from '../components/VoiceChatPanel';
 import { NativeSpeechBoundary } from '../components/NativeSpeechBoundary';
@@ -370,32 +371,26 @@ export function HomeScreen({ navigation }: Props) {
 
   const tabKeys = useMemo(() => dateTabs.map((tab) => tab.key), [dateTabs]);
 
-  const navigateTab = useCallback(
-    (direction: -1 | 1) => {
-      const currentKey = tabKeys.includes(selectedDateKey) ? selectedDateKey : tabBarSelectedKey;
-      const index = tabKeys.indexOf(currentKey);
-      if (index < 0) return;
-      const nextIndex = index + direction;
-      if (nextIndex < 0 || nextIndex >= tabKeys.length) return;
-      setSelectedDateKey(tabKeys[nextIndex]);
+  const getSchedulesForTab = useCallback(
+    (tabKey: string) => {
+      if (tabKey === 'incomplete') return incompleteSchedules;
+      if (tabKey === 'calendar') return monthSchedules;
+      if (tabKey === 'all') return schedules;
+      if (isScheduleDateKey(tabKey)) return filterSchedulesByDate(schedules, tabKey);
+      return schedules;
     },
-    [selectedDateKey, tabBarSelectedKey, tabKeys],
+    [incompleteSchedules, monthSchedules, schedules],
   );
 
-  const contentSwipeResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_evt, gesture) =>
-          !selectionMode &&
-          Math.abs(gesture.dx) > 24 &&
-          Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.4,
-        onPanResponderRelease: (_evt, gesture) => {
-          if (gesture.dx <= -56) navigateTab(1);
-          else if (gesture.dx >= 56) navigateTab(-1);
-        },
-      }),
-    [navigateTab, selectionMode],
-  );
+  const getEmptyMessageForTab = useCallback((tabKey: string) => {
+    if (tabKey === 'incomplete') {
+      return '미완료 일정이 없습니다.\n지난 날짜의 일정을 완료 처리해 주세요.';
+    }
+    if (tabKey === 'all') {
+      return '등록된 일정이 없습니다.\n아래로 당겨 새로고침 · 마이크로 일정 추가';
+    }
+    return '이 날짜에 등록된 일정이 없습니다.\n아래로 당겨 새로고침';
+  }, []);
 
   const recordingDateHint = getRecordingDateHint(
     isScheduleDateKey(selectedDateKey)
@@ -567,6 +562,110 @@ export function HomeScreen({ navigation }: Props) {
 
   const isListView = viewMode === 'list';
 
+  const renderScheduleTabContent = useCallback(
+    (tabKey: string) => {
+      const tabSchedules = getSchedulesForTab(tabKey);
+      const isCalendarTab = tabKey === 'calendar';
+
+      if (loading && !isCalendarTab && tabSchedules.length === 0) {
+        return (
+          <View style={styles.loadingBox}>
+            <ActivityIndicator color={colors.primary} />
+            <Text style={styles.empty}>불러오는 중...</Text>
+          </View>
+        );
+      }
+
+      if (isCalendarTab) {
+        return (
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={[
+              styles.list,
+              listAreaHeight > 0 ? { minHeight: listAreaHeight } : null,
+            ]}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onPullRefresh}
+                tintColor={colors.primary}
+                colors={[colors.primary]}
+                progressBackgroundColor={colors.surface}
+              />
+            }
+          >
+            <ScheduleCalendar
+              monthKey={selectedMonthKey}
+              schedules={monthSchedules}
+              onSelectDate={handleCalendarSelectDate}
+              onSchedulePress={handleSchedulePress}
+              onScheduleLongPress={handleScheduleLongPress}
+            />
+          </ScrollView>
+        );
+      }
+
+      return (
+        <FlatList
+          data={tabSchedules}
+          key={isListView ? `schedule-list-${tabKey}` : `schedule-grid-${tabKey}`}
+          numColumns={isListView ? 1 : 3}
+          keyExtractor={(item) => item.id}
+          style={{ flex: 1 }}
+          contentContainerStyle={[
+            styles.list,
+            listAreaHeight > 0 ? { minHeight: listAreaHeight } : null,
+          ]}
+          columnWrapperStyle={isListView ? undefined : styles.gridRow}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onPullRefresh}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+              progressBackgroundColor={colors.surface}
+            />
+          }
+          ListEmptyComponent={<Text style={styles.empty}>{getEmptyMessageForTab(tabKey)}</Text>}
+          renderItem={({ item }) => (
+            <ScheduleCard
+              variant={isListView ? 'list' : 'grid'}
+              schedule={item}
+              selectionMode={selectionMode}
+              selected={selectedIds.has(item.id)}
+              onPress={() => handleSchedulePress(item)}
+              onLongPress={() => handleScheduleLongPress(item)}
+              onCall={() => item.contact_info && openPhone(item.contact_info)}
+              onMap={() => item.location_info && openMaps(item.location_info)}
+            />
+          )}
+        />
+      );
+    },
+    [
+      colors.primary,
+      colors.surface,
+      getEmptyMessageForTab,
+      getSchedulesForTab,
+      handleCalendarSelectDate,
+      handleScheduleLongPress,
+      handleSchedulePress,
+      isListView,
+      listAreaHeight,
+      loading,
+      monthSchedules,
+      onPullRefresh,
+      refreshing,
+      selectedIds,
+      selectedMonthKey,
+      selectionMode,
+      styles.empty,
+      styles.gridRow,
+      styles.list,
+      styles.loadingBox,
+    ],
+  );
+
   const showCalendar = selectedDateKey === 'calendar';
 
   const showNotificationBanner =
@@ -714,81 +813,15 @@ export function HomeScreen({ navigation }: Props) {
       <View
         style={styles.listArea}
         onLayout={(event) => setListAreaHeight(event.nativeEvent.layout.height)}
-        {...contentSwipeResponder.panHandlers}
       >
-        {loading && !showCalendar && filteredSchedules.length === 0 ? (
-          <View style={styles.loadingBox}>
-            <ActivityIndicator color={colors.primary} />
-            <Text style={styles.empty}>불러오는 중...</Text>
-          </View>
-        ) : showCalendar ? (
-          <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={[
-              styles.list,
-              listAreaHeight > 0 ? { minHeight: listAreaHeight } : null,
-            ]}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onPullRefresh}
-                tintColor={colors.primary}
-                colors={[colors.primary]}
-                progressBackgroundColor={colors.surface}
-              />
-            }
-          >
-            <ScheduleCalendar
-              monthKey={selectedMonthKey}
-              schedules={monthSchedules}
-              onSelectDate={handleCalendarSelectDate}
-              onSchedulePress={handleSchedulePress}
-              onScheduleLongPress={handleScheduleLongPress}
-            />
-          </ScrollView>
-        ) : (
-          <FlatList
-            data={filteredSchedules}
-            key={isListView ? 'schedule-list' : 'schedule-grid-3'}
-            numColumns={isListView ? 1 : 3}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={[
-              styles.list,
-              listAreaHeight > 0 ? { minHeight: listAreaHeight } : null,
-            ]}
-            columnWrapperStyle={isListView ? undefined : styles.gridRow}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onPullRefresh}
-                tintColor={colors.primary}
-                colors={[colors.primary]}
-                progressBackgroundColor={colors.surface}
-              />
-            }
-            ListEmptyComponent={
-              <Text style={styles.empty}>
-                {selectedDateKey === 'incomplete'
-                  ? '미완료 일정이 없습니다.\n지난 날짜의 일정을 완료 처리해 주세요.'
-                  : selectedDateKey === 'all'
-                    ? '등록된 일정이 없습니다.\n아래로 당겨 새로고침 · 마이크로 일정 추가'
-                    : '이 날짜에 등록된 일정이 없습니다.\n아래로 당겨 새로고침'}
-              </Text>
-            }
-            renderItem={({ item }) => (
-              <ScheduleCard
-                variant={isListView ? 'list' : 'grid'}
-                schedule={item}
-                selectionMode={selectionMode}
-                selected={selectedIds.has(item.id)}
-                onPress={() => handleSchedulePress(item)}
-                onLongPress={() => handleScheduleLongPress(item)}
-                onCall={() => item.contact_info && openPhone(item.contact_info)}
-                onMap={() => item.location_info && openMaps(item.location_info)}
-              />
-            )}
-          />
-        )}
+        <ScheduleTabSwipePager
+          tabKeys={tabKeys}
+          selectedKey={tabBarSelectedKey}
+          onSelectKey={setSelectedDateKey}
+          disabled={selectionMode}
+        >
+          {renderScheduleTabContent}
+        </ScheduleTabSwipePager>
       </View>
 
       <NativeSpeechBoundary onFailed={() => setSpeechHostFailed(true)}>
