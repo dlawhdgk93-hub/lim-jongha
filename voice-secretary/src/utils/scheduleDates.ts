@@ -130,58 +130,46 @@ export function formatDateTabLabel(dateKey: string): string {
   return `${m}/${d}`;
 }
 
+export const FIXED_DATE_TAB_KEYS = ['calendar', 'all', 'incomplete'] as const;
+
+export function isFixedDateTabKey(dateKey: string): boolean {
+  return (FIXED_DATE_TAB_KEYS as readonly string[]).includes(dateKey);
+}
+
+export function isScheduleDateKey(dateKey: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(dateKey);
+}
+
 export function buildDateTabs(
   schedules: Schedule[],
   now = new Date(),
-  viewMonthKey?: string,
+  _viewMonthKey?: string,
   allSchedules?: Schedule[],
 ): DateTab[] {
+  const source = allSchedules ?? schedules;
   const counts = new Map<string, number>();
 
-  for (const schedule of schedules) {
+  for (const schedule of source) {
     const key = getScheduleDateKey(schedule.target_timestamp);
+    if (key === 'unknown') continue;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  const incompleteCount = filterIncompleteSchedules(allSchedules ?? schedules, now).length;
-
-  const todayKey = getTodayKey(now);
-  const tomorrowKey = getTomorrowKey(now);
-  const yesterdayKey = getYesterdayKey(now);
-  const currentMonthKey = getMonthKey(now);
-  const monthKey = viewMonthKey ?? currentMonthKey;
-  const showTodayTomorrow = monthKey === currentMonthKey;
-  const pinnedKeys = new Set([todayKey, tomorrowKey, yesterdayKey]);
-
-  const otherKeys = [...counts.keys()]
-    .filter((k) => {
-      if (k === 'unknown') return false;
-      if (showTodayTomorrow && pinnedKeys.has(k)) return false;
-      return true;
-    })
-    .sort((a, b) => b.localeCompare(a));
-
-  const orderedKeys = showTodayTomorrow
-    ? [todayKey, tomorrowKey, yesterdayKey, ...otherKeys]
-    : otherKeys;
-  const seen = new Set<string>();
-
-  const dayTabs: DateTab[] = [];
-  for (const key of orderedKeys) {
-    if (seen.has(key)) continue;
-    seen.add(key);
-    dayTabs.push({
+  const dayTabs: DateTab[] = [...counts.keys()]
+    .sort((a, b) => b.localeCompare(a))
+    .map((key) => ({
       key,
       label: formatDateTabLabel(key),
       count: counts.get(key) ?? 0,
-    });
-  }
+    }));
+
+  const incompleteCount = filterIncompleteSchedules(source, now).length;
 
   return [
     { key: 'calendar', label: '달력', count: schedules.length },
-    { key: 'all', label: '전체', count: schedules.length },
-    { key: 'incomplete', label: '미완료', count: incompleteCount },
+    { key: 'all', label: '전체', count: source.length },
     ...dayTabs,
+    { key: 'incomplete', label: '미완료', count: incompleteCount },
   ];
 }
 
@@ -195,8 +183,9 @@ export function buildAvailableMonths(schedules: Schedule[], now = new Date()): s
   return [...months].sort((a, b) => b.localeCompare(a));
 }
 
-export function filterSchedulesByDate(schedules: Schedule[], dateKey: string): Schedule[] {
-  if (dateKey === 'all' || dateKey === 'calendar' || dateKey === 'incomplete') return schedules;
+export function filterSchedulesByDate(schedules: Schedule[], dateKey: string, now = new Date()): Schedule[] {
+  if (dateKey === 'all' || dateKey === 'calendar') return schedules;
+  if (dateKey === 'incomplete') return filterIncompleteSchedules(schedules, now);
   return schedules.filter((s) => getScheduleDateKey(s.target_timestamp) === dateKey);
 }
 

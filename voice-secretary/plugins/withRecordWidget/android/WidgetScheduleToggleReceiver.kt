@@ -3,21 +3,15 @@ package com.voicesecretary.app
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 
 class WidgetScheduleToggleReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     if (intent.action != ACTION_TOGGLE) return
 
     val scheduleId = intent.getStringExtra(EXTRA_SCHEDULE_ID) ?: return
-    WidgetDataStore.toggleScheduleStatus(context, scheduleId)
+    val nextStatus = WidgetDataStore.toggleScheduleStatus(context, scheduleId) ?: return
     WidgetRefreshHelper.refreshAll(context)
-
-    val openIntent = Intent(Intent.ACTION_VIEW, Uri.parse("teamday://toggle?id=$scheduleId")).apply {
-      setPackage(context.packageName)
-      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-    }
-    context.startActivity(openIntent)
+    WidgetScheduleSync.syncScheduleStatus(context, scheduleId, nextStatus)
   }
 
   companion object {

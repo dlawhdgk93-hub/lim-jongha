@@ -181,7 +181,12 @@ export function parseKoreanScheduleText(
 }
 
 export function getRecordingDateHint(dateKey: string): string | null {
-  if (dateKey === 'all' || dateKey === 'incomplete') return null;
+  if (
+    dateKey === 'all' ||
+    dateKey === 'incomplete'
+  ) {
+    return null;
+  }
   const d = dateKeyToDate(dateKey);
   if (!d) return null;
   return `${d.getMonth() + 1}/${d.getDate()} 일정으로 기록됩니다`;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Platform, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { AlarmOverlay } from '../components/AlarmOverlay';
@@ -39,10 +39,13 @@ import {
   buildDateTabs,
   filterSchedulesByDate,
   filterSchedulesByMonth,
+  formatDateTabLabel,
   formatMonthLabel,
   getMonthKey,
   getScheduleDateKey,
   getTodayKey,
+  isFixedDateTabKey,
+  isScheduleDateKey,
   shiftMonthKey,
 } from '../utils/scheduleDates';
 import { getRecordingDateHint, type ParseScheduleOptions } from '../utils/nlpParser';
@@ -154,7 +157,7 @@ export function HomeScreen({ navigation }: Props) {
     user?.email,
   );
   const { parsing, parseText, parseAudio, savePreview, clearPreview, error } = useVoiceParser(userId);
-  const [selectedDateKey, setSelectedDateKey] = useState(getTodayKey());
+  const [selectedDateKey, setSelectedDateKey] = useState('all');
   const [selectedMonthKey, setSelectedMonthKey] = useState(() => getMonthKey(new Date()));
   const [detailScheduleId, setDetailScheduleId] = useState<string | null>(null);
   const [activeAlarm, setActiveAlarm] = useState<Schedule | null>(null);
@@ -352,23 +355,45 @@ export function HomeScreen({ navigation }: Props) {
 
   const filteredSchedules = useMemo(() => {
     if (selectedDateKey === 'incomplete') return incompleteSchedules;
-    return filterSchedulesByDate(monthSchedules, selectedDateKey);
-  }, [monthSchedules, selectedDateKey, incompleteSchedules]);
+    if (selectedDateKey === 'calendar') return monthSchedules;
+    if (selectedDateKey === 'all') return schedules;
+    if (isScheduleDateKey(selectedDateKey)) {
+      return filterSchedulesByDate(schedules, selectedDateKey);
+    }
+    return schedules;
+  }, [monthSchedules, schedules, selectedDateKey, incompleteSchedules]);
+
+  const tabBarSelectedKey =
+    isFixedDateTabKey(selectedDateKey) || isScheduleDateKey(selectedDateKey)
+      ? selectedDateKey
+      : 'all';
+
+  const tabKeys = useMemo(() => dateTabs.map((tab) => tab.key), [dateTabs]);
+
+  const navigateTab = useCallback(
+    (direction: -1 | 1) => {
+      const currentKey = tabKeys.includes(selectedDateKey) ? selectedDateKey : tabBarSelectedKey;
+      const index = tabKeys.indexOf(currentKey);
+      if (index < 0) return;
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= tabKeys.length) return;
+      setSelectedDateKey(tabKeys[nextIndex]);
+    },
+    [selectedDateKey, tabBarSelectedKey, tabKeys],
+  );
 
   const recordingDateHint = getRecordingDateHint(
-    selectedDateKey === 'calendar' ||
-      selectedDateKey === 'all' ||
-      selectedDateKey === 'incomplete'
-      ? 'all'
-      : selectedDateKey,
+    isScheduleDateKey(selectedDateKey)
+      ? selectedDateKey
+      : selectedDateKey === 'calendar' ||
+          selectedDateKey === 'all' ||
+          selectedDateKey === 'incomplete'
+        ? 'all'
+        : selectedDateKey,
   );
 
   const voiceParseOptions = useMemo((): ParseScheduleOptions | undefined => {
-    if (
-      selectedDateKey !== 'all' &&
-      selectedDateKey !== 'calendar' &&
-      selectedDateKey !== 'incomplete'
-    ) {
+    if (isScheduleDateKey(selectedDateKey)) {
       return { defaultDateKey: selectedDateKey };
     }
     return undefined;
@@ -394,27 +419,15 @@ export function HomeScreen({ navigation }: Props) {
   }, [handleAlarm]);
 
   useEffect(() => {
-    if (
-      selectedDateKey !== 'all' &&
-      selectedDateKey !== 'calendar' &&
-      !dateTabs.some((t) => t.key === selectedDateKey)
-    ) {
-      setSelectedDateKey('all');
-    }
-  }, [dateTabs, selectedDateKey]);
+    if (isFixedDateTabKey(selectedDateKey) || isScheduleDateKey(selectedDateKey)) return;
+    setSelectedDateKey('all');
+  }, [selectedDateKey]);
 
   useEffect(() => {
     if (selectedMonthKey !== getMonthKey(new Date())) return;
-    const today = getTodayKey();
-    if (
-      selectedDateKey === 'all' ||
-      selectedDateKey === 'calendar' ||
-      dateTabs.some((t) => t.key === selectedDateKey)
-    ) {
-      return;
-    }
-    setSelectedDateKey(today);
-  }, [selectedMonthKey, dateTabs, selectedDateKey]);
+    if (isFixedDateTabKey(selectedDateKey) || isScheduleDateKey(selectedDateKey)) return;
+    setSelectedDateKey('all');
+  }, [selectedMonthKey, selectedDateKey]);
 
   useEffect(() => {
     if (userId) {
@@ -437,11 +450,7 @@ export function HomeScreen({ navigation }: Props) {
   const handleParseText = useCallback(
     async (text: string, rawText?: string) => {
       const parseOptions =
-        selectedDateKey !== 'all' &&
-        selectedDateKey !== 'calendar' &&
-        selectedDateKey !== 'incomplete'
-          ? { defaultDateKey: selectedDateKey }
-          : undefined;
+        isScheduleDateKey(selectedDateKey) ? { defaultDateKey: selectedDateKey } : undefined;
       const result = await parseText(text, parseOptions, rawText);
       clearPreview();
       return result;
@@ -537,7 +546,9 @@ export function HomeScreen({ navigation }: Props) {
         ? `전체 일정 (${filteredSchedules.length})`
         : selectedDateKey === 'incomplete'
           ? `미완료 (${filteredSchedules.length})`
-          : `${dateTabs.find((t) => t.key === selectedDateKey)?.label ?? ''} (${filteredSchedules.length})`;
+          : isScheduleDateKey(selectedDateKey)
+            ? `${formatDateTabLabel(selectedDateKey)} (${filteredSchedules.length})`
+            : `${dateTabs.find((t) => t.key === selectedDateKey)?.label ?? ''} (${filteredSchedules.length})`;
 
   const isListView = viewMode === 'list';
 
@@ -549,7 +560,11 @@ export function HomeScreen({ navigation }: Props) {
     notificationStatus !== 'unsupported';
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+    >
       <View style={styles.header}>
         <Text style={styles.headerTitle}>팀데이</Text>
         <View style={styles.headerActions}>
@@ -604,11 +619,16 @@ export function HomeScreen({ navigation }: Props) {
         }}
         onSelectCurrent={() => {
           setSelectedMonthKey(getMonthKey(new Date()));
-          setSelectedDateKey(getTodayKey());
+          setSelectedDateKey('calendar');
         }}
       />
 
-      <DateTabBar tabs={dateTabs} selectedKey={selectedDateKey} onSelect={setSelectedDateKey} />
+      <DateTabBar
+        tabs={dateTabs}
+        selectedKey={tabBarSelectedKey}
+        onSelect={setSelectedDateKey}
+        onSwipeTab={navigateTab}
+      />
 
       <Text style={styles.sectionTitle}>{sectionLabel}</Text>
 
@@ -821,6 +841,6 @@ export function HomeScreen({ navigation }: Props) {
           setDetailScheduleId(scheduleId);
         }}
       />
-    </View>
+    </KeyboardAvoidingView>
   );
 }

@@ -17,7 +17,7 @@ const WIDGET_RECEIVERS = [
   },
   {
     name: '.TodayScheduleWidgetProvider',
-    label: '팀데이 미완료·3일',
+    label: '팀데이 전체 일정',
     infoXml: '@xml/today_widget_info',
   },
   {
@@ -36,6 +36,8 @@ const KOTLIN_FILES = [
   'WidgetSyncModule.kt',
   'WidgetSyncPackage.kt',
   'WidgetScheduleToggleReceiver.kt',
+  'WidgetScheduleSync.kt',
+  'WidgetHideCompletedReceiver.kt',
 ];
 
 const LAYOUT_FILES = {
@@ -65,9 +67,14 @@ const TOGGLE_RECEIVER = {
   action: 'com.voicesecretary.app.WIDGET_TOGGLE_SCHEDULE',
 };
 
+const HIDE_COMPLETED_RECEIVER = {
+  name: '.WidgetHideCompletedReceiver',
+  action: 'com.voicesecretary.app.WIDGET_TOGGLE_HIDE_COMPLETED',
+};
+
 const WIDGET_STRINGS = [
   ['widget_record_desc', '바로 음성 기록'],
-  ['widget_today_desc', '미완료·오늘·내일·글피 일정'],
+  ['widget_today_desc', '전체 일정 · 완료 숨김'],
   ['widget_calendar_desc', '월간 달력'],
 ];
 
@@ -157,6 +164,7 @@ function withRecordWidget(config) {
       ensureWidgetReceiver(app, receiver.name, receiver.label, receiver.infoXml);
     }
     ensureToggleReceiver(app, TOGGLE_RECEIVER.name, TOGGLE_RECEIVER.action);
+    ensureToggleReceiver(app, HIDE_COMPLETED_RECEIVER.name, HIDE_COMPLETED_RECEIVER.action);
     return manifestConfig;
   });
 

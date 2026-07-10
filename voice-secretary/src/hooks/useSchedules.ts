@@ -156,7 +156,6 @@ export function useSchedules(userId: string | undefined, userEmail: string | und
           event: '*',
           schema: 'public',
           table: 'schedules',
-          filter: `user_id=eq.${userId}`,
         },
         () => {
           void fetchSchedules({ silent: true });

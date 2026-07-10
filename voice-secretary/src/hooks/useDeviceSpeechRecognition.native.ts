@@ -84,6 +84,16 @@ export function useDeviceSpeechRecognitionImpl(): DeviceSpeechApi {
 
   const isListeningRef = useRef(false);
 
+  const pickBestTranscript = (results: { transcript?: string }[]): string =>
+    (results[0]?.transcript ?? '').trim();
+
+  const appendFinalSegment = (base: string, segment: string): string => {
+    if (!segment) return base;
+    if (!base) return segment;
+    if (base === segment || base.endsWith(segment)) return base;
+    return `${base} ${segment}`.trim();
+  };
+
 
 
   const clearStopTimer = () => {
@@ -251,19 +261,31 @@ export function useDeviceSpeechRecognitionImpl(): DeviceSpeechApi {
 
   useSpeechRecognitionEvent('result', (event) => {
 
-    const transcript = event.results.map((r) => r.transcript).join('').trim();
+    const segment = pickBestTranscript(event.results);
 
-    if (!transcript) return;
+    if (!segment) return;
 
-
+    // #region agent log
+    debugLog(
+      'useDeviceSpeechRecognition.native.ts:result',
+      'result event',
+      {
+        isFinal: event.isFinal,
+        resultsCount: event.results.length,
+        segment: segment.slice(0, 80),
+        altTranscripts: event.results.slice(0, 4).map((r) => (r.transcript ?? '').slice(0, 40)),
+      },
+      'E1',
+    );
+    // #endregion
 
     if (event.isFinal) {
 
-      finalTextRef.current = transcript;
+      finalTextRef.current = appendFinalSegment(finalTextRef.current, segment);
 
-      interimTextRef.current = transcript;
+      interimTextRef.current = finalTextRef.current;
 
-      setInterimText(transcript);
+      setInterimText(finalTextRef.current);
 
       // #region agent log
 
@@ -273,7 +295,11 @@ export function useDeviceSpeechRecognitionImpl(): DeviceSpeechApi {
 
         'final transcript',
 
-        { transcript: transcript.slice(0, 80) },
+        {
+          segment: segment.slice(0, 80),
+          combined: finalTextRef.current.slice(0, 120),
+          resultsCount: event.results.length,
+        },
 
         'S4',
 
@@ -286,18 +312,19 @@ export function useDeviceSpeechRecognitionImpl(): DeviceSpeechApi {
         debugLog(
           'useDeviceSpeechRecognition.native.ts:result',
           'resolve stop from final result',
-          { transcript: transcript.slice(0, 80) },
+          { transcript: finalTextRef.current.slice(0, 80) },
           'D5',
         );
         // #endregion
-        resolveStopRef.current(transcript);
+        resolveStopRef.current(finalTextRef.current);
         clearStopWaiters();
       }
       return;
     }
 
-    interimTextRef.current = transcript;
-    setInterimText(transcript);
+    const interimDisplay = appendFinalSegment(finalTextRef.current, segment);
+    interimTextRef.current = interimDisplay;
+    setInterimText(interimDisplay);
   });
 
 
@@ -439,6 +466,8 @@ export function useDeviceSpeechRecognitionImpl(): DeviceSpeechApi {
           interimResults: true,
 
           continuous: true,
+
+          maxAlternatives: 1,
 
           addsPunctuation: true,
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -92,6 +93,9 @@ const createStyles = (c: ThemeColors) => ({
     backgroundColor: c.surface,
     paddingHorizontal: 12,
     paddingBottom: Platform.OS === 'web' ? 12 : 8,
+  },
+  panelKeyboardOpen: {
+    paddingBottom: 0,
   },
   panelExpanded: {
     maxHeight: 400,
@@ -266,6 +270,8 @@ export function VoiceChatPanel({
   const micPressInFlightRef = useRef(false);
   const parseInFlightRef = useRef(false);
   const parseInvocationRef = useRef(0);
+  const saveInFlightRef = useRef(false);
+  const [keyboardInset, setKeyboardInset] = useState(0);
 
   const { isSupported, isListening, interimRaw, startListening, stopListening } =
     useSpeechRecognition();
@@ -347,6 +353,21 @@ export function VoiceChatPanel({
     );
     // #endregion
   }, [activeRecordingHint, recordingDateHint, defaultDateKey, messages, deviceInterimText, interimRaw]);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardInset(event.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardInset(0);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const appendMessage = useCallback((msg: Omit<ChatMessage, 'id'>) => {
     setMessages((prev) => [...prev, { ...msg, id: `${Date.now()}-${Math.random()}` }]);
@@ -686,6 +707,8 @@ export function VoiceChatPanel({
   };
 
   const handleSavePreview = async (messageId: string, preview: VoiceParseResult) => {
+    if (saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
     try {
       await onConfirmSave(withAlarmMode(preview, alarmMode));
       setMessages((prev) =>
@@ -698,6 +721,8 @@ export function VoiceChatPanel({
       appendMessage({ role: 'assistant', text: '일정이 저장되었습니다.' });
     } catch (err) {
       appendMessage({ role: 'assistant', text: `저장 실패: ${(err as Error).message}` });
+    } finally {
+      saveInFlightRef.current = false;
     }
   };
 
@@ -712,6 +737,8 @@ export function VoiceChatPanel({
   };
 
   const handleSaveTranscriptChoice = async (messageId: string, transcript: string) => {
+    if (saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
     const preview = withAlarmMode(
       buildTranscriptPreview(transcript, defaultDateKey),
       alarmMode,
@@ -732,10 +759,14 @@ export function VoiceChatPanel({
       appendMessage({ role: 'assistant', text: '음성 인식 결과로 일정이 저장되었습니다.' });
     } catch (err) {
       appendMessage({ role: 'assistant', text: `저장 실패: ${(err as Error).message}` });
+    } finally {
+      saveInFlightRef.current = false;
     }
   };
 
   const handleSaveAiChoice = async (messageId: string, aiResult: VoiceParseResult) => {
+    if (saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
     try {
       await onConfirmSave(withAlarmMode(aiResult, alarmMode));
       setMessages((prev) =>
@@ -752,6 +783,8 @@ export function VoiceChatPanel({
       appendMessage({ role: 'assistant', text: 'AI 추천 일정이 저장되었습니다.' });
     } catch (err) {
       appendMessage({ role: 'assistant', text: `저장 실패: ${(err as Error).message}` });
+    } finally {
+      saveInFlightRef.current = false;
     }
   };
 
@@ -858,7 +891,13 @@ export function VoiceChatPanel({
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={[styles.panel, expanded && styles.panelExpanded]}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 72 : 0}
+      style={[
+        styles.panel,
+        expanded && styles.panelExpanded,
+        keyboardInset > 0 && styles.panelKeyboardOpen,
+        keyboardInset > 0 ? { marginBottom: keyboardInset } : null,
+      ]}
     >
       {useMicRecording && !micActive ? (
         <View style={styles.speechNotice}>
